@@ -110,6 +110,47 @@ dbExecute(con, "
           ")
 
 
+dbExecute(con, "
+CREATE TABLE dim_query (
+    query_id SERIAL PRIMARY KEY,
+    query_string VARCHAR(256) NOT NULL
+);
+")
+
+dbExecute(con, "
+CREATE TABLE dim_cust_query (
+    customer_id INTEGER NOT NULL,
+    query_id INTEGER NOT NULL,
+    date_added DATE NOT NULL,
+    PRIMARY KEY (customer_id, date_added, query_id),
+    FOREIGN KEY (customer_id) REFERENCES dim_customer(customer_id) ON DELETE CASCADE,
+    FOREIGN KEY (query_id) REFERENCES dim_query(query_id) ON DELETE CASCADE
+);
+")
+
+dbExecute(con,"
+          ALTER TABLE dim_cust_query 
+ADD CONSTRAINT dim_cust_query_unique 
+UNIQUE (customer_id, query_id);
+          ")
+
+
+dbExecute(con, "
+CREATE TABLE fact_query_history (
+    customer_id INTEGER NOT NULL,
+    query_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    presence_score NUMERIC(10, 4),
+    perception_score NUMERIC(10, 4),
+    prestige_score NUMERIC(10, 4),
+    persistence_score NUMERIC(10, 4),
+    airr_score NUMERIC(10, 4),
+    PRIMARY KEY (customer_id, date, query_id),
+    FOREIGN KEY (customer_id) REFERENCES dim_customer(customer_id) ON DELETE CASCADE,
+    FOREIGN KEY (query_id) REFERENCES dim_query(query_id) ON DELETE CASCADE
+);
+")
+
 # Create indexes
 dbExecute(con, "CREATE INDEX idx_presence_customer_date ON fact_presence_history(customer_id, date);")
 dbExecute(con, "CREATE INDEX idx_perception_customer_date ON fact_perception_history(customer_id, date);")
@@ -121,6 +162,10 @@ dbExecute(con, "CREATE INDEX idx_perception_date ON fact_perception_history(date
 dbExecute(con, "CREATE INDEX idx_prestige_date ON fact_prestige_history(date);")
 dbExecute(con, "CREATE INDEX idx_persistence_date ON fact_persistence_history(date);")
 dbExecute(con, "CREATE INDEX idx_airr_date ON fact_airr_history(date);")
+dbExecute(con, "CREATE INDEX idx_query_query_id ON dim_query(query_id);")
+dbExecute(con, "CREATE INDEX idx_cust_query_query_id ON dim_cust_query(query_id);")
+dbExecute(con, "CREATE INDEX idx_query_history_query_id ON fact_query_history(query_id);")
+dbExecute(con, "CREATE INDEX idx_query_history_customer ON fact_query_history(customer_id);")
 
 
 # Verify tables were created
@@ -149,8 +194,16 @@ add_customer <- function(con, customer_name) {
   return(result$customer_id)
 }
 
-add_customer(con, 'Fila')
+# add_customer(con, 'Fila')
+# 
+# add_customer(con, 'Adidas')
+# ttt <- dbGetQuery(con, 'select * from dim_customer')
+# hash_password("Adidas")
+# 
+# cname <- "Umbro"
+# dbExecute(con,paste0("update dim_customer
+#                       set password_hash = '",hash_password(cname),
+#                      "' where customer_name = '", cname,
+#                      "';"))
 
-add_customer(con, 'Adidas')
-ttt <- dbGetQuery(con, 'select * from dim_customer')
 

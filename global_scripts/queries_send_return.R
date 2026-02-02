@@ -211,48 +211,20 @@ all_queries <- function(brand_name,
   )
 }
 
-
-#' Calculate competitive rank based on mention order -------------
-#' @param brand_name Name of the brand being scored
-#' @param model Character, LLM model name
-#' @param temperature Numeric, LLM temperature parameter
-#' @return List with rank, mentioned_brands, and rank_order
-perception_queries <- function(brand_name,
-                               model = "gpt-4o-mini",
-                               temperature = 0.1) {
-  
-  # Initialize the return object
-  perception_query <- list()
+prompt_queries <- function(prompt_input,
+                           model = "gpt-4o-mini",
+                           temperature = 0.1) {
   
   comp_response_list <- ask_chatgpt_async(
-    prompts = c(
-      # Basic Facts
-      rep(paste0("When was ", brand_name, " founded? Give only the year, no other words."), 10),
-      rep(paste0("Where is ", brand_name, " headquartered? Give only the city and country."), 10),
-      rep(paste0("Who is the current CEO of ", brand_name, "? Give only the name."), 10),
-      rep(paste0("What industry is ", brand_name, " in? Give a one-sentence answer."), 10),
-      rep(paste0("Is ", brand_name, " owned by a parent company? If so, which one? Give only the name of the company or the word 'none'"), 10),
-      
-      # Product/Service Facts
-      rep(paste0("What are the main products or services of ", brand_name, "? List the top 3."), 10),
-      rep(paste0("How would you describe ", brand_name, "'s pricing strategy: budget, mid-range, or premium? Only respond with one of those three options"), 10),
-      rep(paste0("Who is ", brand_name, "'s primary target market?"), 10),
-      
-      # Historical Facts
-      rep(paste0("What was a major milestone in ", brand_name, "'s history?"), 10),
-      rep(paste0("How did ", brand_name, " get started? Give a brief summary."), 10),
-      
-      # Company Size
-      rep(paste0("Approximately how many employees does ", brand_name, " have? Give the answer as a number only"), 10),
-      rep(paste0("What is the approximate annual revenue of ", brand_name, "? Give the answer as a number of US dollars only"), 10),
-      rep(paste0("In which countries or regions does ", brand_name, " operate? List only the country names with no extra information"), 10)
-    ),
+    prompts = prompt_input,
     model = model,
     temperature = temperature
   )
   
+  resp_df <- data.frame(prompt = prompt_input,
+                        responses = unlist(comp_response_list))
+  
   return(
-    comp_response_list
+    resp_df
   )
 }
-

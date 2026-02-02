@@ -107,7 +107,7 @@ calculate_persistence_score <- function(brand_name,
 #' Calculate prestige score directly from prompt texts
 #' @param brand_name Character, name of brand to score
 #' @return List with score, prompts, responses, and metadata
-calculate_daily_persistence <- function(brand_name) {
+calculate_daily_persistence <- function(brand_name, run_date) {
   
   cust_id = dbGetQuery(con, paste0("select customer_id from dim_customer where lower(customer_name) = '",tolower(brand_name),"';"))$customer_id
   # prestige_scores <- dbGetQuery(con, paste0('select * from fact_prestige_history
@@ -116,7 +116,7 @@ calculate_daily_persistence <- function(brand_name) {
   #                                            where customer_id = ',cust_id,';'))
   presence_scores <- dbGetQuery(con, paste0("select * from fact_presence_history
                                              where customer_id = ", cust_id, "
-                                             and date <= '", Sys.Date(), "';"))
+                                             and date <= '", run_date, "';"))
   
   if(nrow(presence_scores) < 5){
     persistence_out <- list(
@@ -135,5 +135,13 @@ calculate_daily_persistence <- function(brand_name) {
   return(persistence_out)
 }
 
-
+calculate_daily_persistence_sep <- function(presence_history) {
+  
+  presence_scores <- presence_history
+  
+  persistence_out <- calculate_persistence_score('placeholder',
+                                                 presence_scores)
+  
+  return(persistence_out$score)
+}
 

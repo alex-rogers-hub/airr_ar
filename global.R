@@ -76,7 +76,7 @@ hash_password <- function(password) {
 }
 
 # Helper function to verify user credentials
-verify_user <- function(username, password) {
+verify_user <- function(customer_name, password) {
   query <- "SELECT customer_id, customer_name, password_hash, email 
             FROM dim_customer 
             WHERE customer_name = $1"
@@ -107,6 +107,9 @@ create_user <- function(customer_name, email, password) {
       params = list(customer_name, Sys.Date(), email, hash_password(password),)
     )
     
+    # auto generate airr score on user create
+    user_create_airr()
+    
     return(result$customer_id)
   }, error = function(e) {
     return(NULL)
@@ -128,8 +131,10 @@ source("~/AiRR/global_scripts/prestige.R")
 source("~/AiRR/global_scripts/persistence.R")
 source("~/AiRR/global_scripts/full_airr_score.R")
 source("~/AiRR/global_scripts/upload_functions.R")
+source("~/AiRR/global_scripts/app_helper_functions.R")
 
 # running the below runs by default in "gpt-4o-mini". Add "gpt-4o" or other model name to change this
 # daily_refresh_loop()
+# daily_prompt_loop()
 
 

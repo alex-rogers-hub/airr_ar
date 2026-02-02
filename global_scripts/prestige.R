@@ -663,3 +663,325 @@ test_prestige_stability <- function(brand_name,
 # View(stability_test$runs)
 
 
+
+#' Calculate prestige score from general responses that may or may not mention the brand
+#' @param brand_name Character, name of brand to score
+#' @param brand_aliases Character vector of brand name variations/aliases
+#' @param rel_responses Dataframe with 'responses' column containing text responses
+#' @param context_window Integer, number of characters around brand mention to analyze
+#' @param model Character, LLM model name (for additional queries if needed)
+#' @param temperature Numeric, LLM temperature parameter
+#' @return List with prestige score and detailed metrics
+calculate_prestige_from_prompts_sep <- function(brand_name,
+                                            customer_id,
+                                            rel_responses,
+                                            context_window = 150,
+                                            model = "gpt-4o-mini",
+                                            temperature = 0.1) {
+  
+  # Initialize results storage
+  mention_analysis <- tibble(
+    response_id = integer(),
+    mentioned = logical(),
+    mention_count = integer(),
+    mention_positions = list(),
+    contexts = list()
+  )
+  
+  authority_results <- tibble(
+    response_id = integer(),
+    weighted_score = numeric(),
+    keyword_count = integer(),
+    keywords_found = list()
+  )
+  
+  leadership_results <- tibble(
+    response_id = integer(),
+    weighted_score = numeric(),
+    keyword_count = integer(),
+    keywords_found = list()
+  )
+  
+  competitive_data <- tibble(
+    response_id = integer(),
+    brands_mentioned = list(),
+    brand_positions = list()
+  )
+  
+  # Process each response
+  for (i in seq_len(nrow(rel_responses))) {
+    response_text <- rel_responses$responses[i]
+    response_lower <- tolower(response_text)
+    
+    # Check if brand is mentioned
+    all_mentions <- find_all_mentions(response_text, brand_name)
+    is_mentioned <- length(all_mentions) > 0
+    
+    # Store mention data
+    mention_analysis <- mention_analysis %>%
+      add_row(
+        response_id = i,
+        mentioned = is_mentioned,
+        mention_count = length(all_mentions),
+        mention_positions = list(all_mentions),
+        contexts = list(NULL)  # Will populate below
+      )
+    
+    # If not mentioned, skip detailed analysis for this response
+    if (!is_mentioned) {
+      authority_results <- authority_results %>%
+        add_row(
+          response_id = i,
+          weighted_score = 0,
+          keyword_count = 0,
+          keywords_found = list(character())
+        )
+      
+      leadership_results <- leadership_results %>%
+        add_row(
+          response_id = i,
+          weighted_score = 0,
+          keyword_count = 0,
+          keywords_found = list(character())
+        )
+      
+      competitive_data <- competitive_data %>%
+        add_row(
+          response_id = i,
+          brands_mentioned = list(character()),
+          brand_positions = list(numeric())
+        )
+      
+      next
+    }
+    
+    # Extract contexts around brand mentions
+    contexts <- map(all_mentions, function(mention) {
+      start_pos <- max(1, mention$start - context_window)
+      end_pos <- min(nchar(response_text), mention$end + context_window)
+      substr(response_text, start_pos, end_pos)
+    })
+    
+    # Update contexts in mention_analysis
+    mention_analysis$contexts[i] <- list(contexts)
+    
+    # Combine all contexts for analysis
+    combined_context <- paste(contexts, collapse = " ")
+    combined_context_lower <- tolower(combined_context)
+    
+    # --- AUTHORITY ANALYSIS ---
+    found_authority_keywords <- list()
+    
+    for (tier_name in names(AUTHORITY_KEYWORDS_WEIGHTED)) {
+      tier <- AUTHORITY_KEYWORDS_WEIGHTED[[tier_name]]
+      
+      for (keyword in tier$keywords) {
+        if (str_detect(combined_context_lower, fixed(tolower(keyword)))) {
+          if (!keyword %in% names(found_authority_keywords)) {
+            found_authority_keywords[[keyword]] <- tier$weight
+          }
+        }
+      }
+    }
+    
+    auth_weighted_score <- sum(unlist(found_authority_keywords))
+    
+    authority_results <- authority_results %>%
+      add_row(
+        response_id = i,
+        weighted_score = auth_weighted_score,
+        keyword_count = length(found_authority_keywords),
+        keywords_found = list(names(found_authority_keywords))
+      )
+    
+    # --- LEADERSHIP ANALYSIS ---
+    found_leadership_keywords <- list()
+    
+    for (tier_name in names(LEADERSHIP_KEYWORDS_WEIGHTED)) {
+      tier <- LEADERSHIP_KEYWORDS_WEIGHTED[[tier_name]]
+      
+      for (keyword in tier$keywords) {
+        if (str_detect(combined_context_lower, fixed(tolower(keyword)))) {
+          if (!keyword %in% names(found_leadership_keywords)) {
+            found_leadership_keywords[[keyword]] <- tier$weight
+          }
+        }
+      }
+    }
+    
+    lead_weighted_score <- sum(unlist(found_leadership_keywords))
+    
+    leadership_results <- leadership_results %>%
+      add_row(
+        response_id = i,
+        weighted_score = lead_weighted_score,
+        keyword_count = length(found_leadership_keywords),
+        keywords_found = list(names(found_leadership_keywords))
+      )
+    
+    # --- COMPETITIVE POSITIONING ---
+    # Find other brands mentioned in the same response - pull competitors from history table
+    
+    other_brands_df <- dbGetQuery(con,paste0('select prestige_rank_comps_brands from fact_prestige_history
+                                          where customer_id = ', customer_id,
+                                          " and date = '", Sys.Date(),"';"))
+    
+    other_brands <- str_split_1(other_brands_df$prestige_rank_comps_brands, " \\| ")
+    
+    # Find positions of other brands
+    brand_positions_list <- map(unique(other_brands), function(brand) {
+      find_first_mention(response_text, brand)
+    })
+    names(brand_positions_list) <- unique(other_brands)
+    
+    competitive_data <- competitive_data %>%
+      add_row(
+        response_id = i,
+        brands_mentioned = list(unique(other_brands)),
+        brand_positions = list(brand_positions_list)
+      )
+  }
+  
+  # --- CALCULATE FINAL SCORES ---
+  
+  # Calculate mention rate (percentage of responses mentioning the brand)
+  mention_rate <- mean(mention_analysis$mentioned) * 100
+  
+  # Only calculate scores from responses that mention the brand
+  mentioned_responses <- mention_analysis %>% filter(mentioned)
+  
+  if (nrow(mentioned_responses) == 0) {
+    # Brand never mentioned - return zero scores
+    return(list(
+      prestige_score = 0,
+      prestige_rank_score = 0,
+      prestige_authority_score = 0,
+      prestige_leadership_score = 0,
+      mention_rate = 0,
+      total_responses = nrow(rel_responses),
+      responses_with_brand = 0,
+      detail = list(
+        mention_analysis = mention_analysis,
+        authority_results = authority_results,
+        leadership_results = leadership_results,
+        competitive_data = competitive_data
+      )
+    ))
+  }
+  
+  # Authority Score
+  auth_avg_weighted <- authority_results %>%
+    filter(response_id %in% mentioned_responses$response_id) %>%
+    summarise(avg = mean(weighted_score, na.rm = TRUE)) %>%
+    pull(avg)
+  
+  authority_score <- calculate_authority_score(auth_avg_weighted)
+  
+  # Leadership Score
+  lead_avg_weighted <- leadership_results %>%
+    filter(response_id %in% mentioned_responses$response_id) %>%
+    summarise(avg = mean(weighted_score, na.rm = TRUE)) %>%
+    pull(avg)
+  
+  leadership_score <- calculate_leadership_score(lead_avg_weighted)
+  
+  # Competitive Rank Score
+  # Calculate average position of brand vs other brands
+  brand_positions <- map_dbl(mentioned_responses$response_id, function(id) {
+    mention_data <- mention_analysis %>% filter(response_id == id)
+    if (length(mention_data$mention_positions[[1]]) > 0) {
+      return(mention_data$mention_positions[[1]][[1]]$start)
+    }
+    return(NA_real_)
+  })
+  
+  comp_scores <- map_dbl(mentioned_responses$response_id, function(id) {
+    comp_data <- competitive_data %>% filter(response_id == id)
+    other_brand_pos <- unlist(comp_data$brand_positions[[1]])
+    other_brand_pos <- other_brand_pos[!is.na(other_brand_pos)]
+    
+    brand_pos <- brand_positions[mentioned_responses$response_id == id]
+    
+    if (length(other_brand_pos) == 0) {
+      return(100)  # Only brand mentioned - top rank
+    }
+    
+    # Calculate how many brands were mentioned before this one
+    brands_before <- sum(other_brand_pos < brand_pos)
+    total_brands <- length(other_brand_pos) + 1
+    
+    # Convert to score (earlier = better)
+    score <- 100 * (1 - brands_before / total_brands)
+    return(score)
+  })
+  
+  rank_score <- mean(comp_scores, na.rm = TRUE)
+  
+  # Calculate overall prestige score
+  prestige_score <- calculate_prestige_score(
+    rank_score,
+    authority_score,
+    leadership_score,
+    PRESTIGE_WEIGHTS
+  )
+  
+  # Adjust prestige score by mention rate
+  # If brand is only mentioned in 50% of responses, reduce score accordingly
+  adjusted_prestige_score <- prestige_score * (mention_rate / 100)
+  
+  # Return comprehensive results
+  # return(list(
+  #   prestige_score = adjusted_prestige_score,
+  #   prestige_score_unadjusted = prestige_score,
+  #   prestige_rank_score = rank_score,
+  #   prestige_authority_score = authority_score,
+  #   prestige_leadership_score = leadership_score,
+  #   mention_rate = mention_rate,
+  #   total_responses = nrow(rel_responses),
+  #   responses_with_brand = nrow(mentioned_responses),
+  #   avg_mentions_per_response = mean(mentioned_responses$mention_count),
+  #   detail = list(
+  #     mention_analysis = mention_analysis,
+  #     authority_results = authority_results,
+  #     leadership_results = leadership_results,
+  #     competitive_data = competitive_data
+  #   ),
+  #   component_scores = list(
+  #     authority = list(
+  #       avg_weighted = auth_avg_weighted,
+  #       score = authority_score
+  #     ),
+  #     leadership = list(
+  #       avg_weighted = lead_avg_weighted,
+  #       score = leadership_score
+  #     ),
+  #     rank = list(
+  #       avg_position_score = rank_score,
+  #       position_scores = comp_scores
+  #     )
+  #   )
+  # ))
+  
+  return(adjusted_prestige_score)
+}
+
+# Example usage:
+# responses_df <- data.frame(
+#   responses = c(
+#     "Nike is the leading athletic brand with innovative products.",
+#     "Adidas and Puma are popular choices for sportswear.",
+#     "Under Armour offers great performance gear for athletes.",
+#     "The best running shoes come from various brands including Nike, Adidas, and New Balance."
+#   )
+# )
+# 
+# result <- calculate_prestige_from_responses(
+#   brand_name = "Nike",
+#   brand_aliases = c("Nike Inc", "Nike Brand"),
+#   rel_responses = responses_df,
+#   context_window = 150
+# )
+# 
+# print(result$prestige_score)
+# print(result$mention_rate)
+# View(result$detail$mention_analysis)

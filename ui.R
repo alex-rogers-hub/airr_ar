@@ -34,9 +34,9 @@ ui <- dashboardPage(
     useShinyjs(),
     sidebarMenu(
       id = "sidebar",
-      menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard")),
-      menuItem("Performance", tabName = "performance", icon = icon("chart-line")),
-      menuItem("Analytics", tabName = "analytics", icon = icon("chart-bar")),
+      menuItem("AiRR Dashboard", tabName = "airr_dashboard", icon = icon("dashboard")),
+      menuItem("Prompt Performance", tabName = "prompt_performance", icon = icon("chart-line")),
+      # menuItem("Analytics", tabName = "analytics", icon = icon("chart-bar")),
       menuItem("Profile", tabName = "profile", icon = icon("user"))
     )
   ),
@@ -101,93 +101,96 @@ ui <- dashboardPage(
       tabItems(
         # Dashboard Tab
         tabItem(
-          tabName = "dashboard",
+          tabName = "airr_dashboard",
           
           fluidRow(
-            valueBoxOutput("metric_box_1", width = 3),
-            valueBoxOutput("metric_box_2", width = 3),
-            valueBoxOutput("metric_box_3", width = 3),
-            valueBoxOutput("metric_box_4", width = 3)
+            valueBoxOutput("metric_box_1", width = 4)
+            # valueBoxOutput("metric_box_2", width = 3),
+            # valueBoxOutput("metric_box_3", width = 3),
+            # valueBoxOutput("metric_box_4", width = 3)
           ),
           
           fluidRow(
             box(
-              title = "Performance Overview",
+              title = "Persistence",
               status = "primary",
               solidHeader = TRUE,
               width = 8,
               withSpinner(
-                # plotlyOutput("timeseries_chart", height = "400px"),
-                h3('timeseries chart here'),
+                plotlyOutput("timeseries_chart", height = "400px"),
+                # h3('timeseries chart here'),
                 type = 4,
                 color = "#667eea"
               )
             ),
             
             box(
-              title = "Skills Radar",
+              title = "The 4 'Ps'",
               status = "primary",
               solidHeader = TRUE,
               width = 4,
               withSpinner(
-                # plotlyOutput("spider_chart", height = "400px"),
-                h3('spider chart here'),
+                plotlyOutput("spider_chart", height = "400px"),
                 type = 4,
                 color = "#667eea"
               )
             )
           ),
           
-          fluidRow(
-            box(
-              title = "Recent Activity",
-              status = "info",
-              solidHeader = TRUE,
-              width = 12,
-              withSpinner(
-                # DT::dataTableOutput("activity_table"),
-                h3('output table here'),
-                type = 4,
-                color = "#667eea"
-              )
-            )
-          )
+          # fluidRow(
+          #   box(
+          #     title = "Recent Activity",
+          #     status = "info",
+          #     solidHeader = TRUE,
+          #     width = 12,
+          #     withSpinner(
+          #       # DT::dataTableOutput("activity_table"),
+          #       h3('output table here'),
+          #       type = 4,
+          #       color = "#667eea"
+          #     )
+          #   )
+          # )
         ),
         
         # Performance Tab
         tabItem(
-          tabName = "performance",
+          tabName = "prompt_performance",
           
           fluidRow(
             box(
-              title = "Metric Selection",
+              title = "Submit prompt for tracking",
               status = "primary",
               solidHeader = TRUE,
               width = 12,
-              selectInput(
-                "metric_selector",
-                "Select Metrics to Display:",
-                choices = c('choice1','choice2'),
-                multiple = TRUE,
+              textInput(
+                "prompt_input",
+                "Enter your prompt:",
+                placeholder = "Type your prompt here...",
                 width = "100%"
+              ),
+              actionButton(
+                "submit_prompt_btn",
+                "Submit Prompt",
+                icon = icon("paper-plane"),
+                class = "btn-primary",
+                style = "margin-top: 10px; padding: 10px 20px; font-weight: 600;"
               )
             )
           ),
           
           fluidRow(
             box(
-              title = "Time Series Analysis",
+              title = "Your Tracked Queries",
               status = "primary",
               solidHeader = TRUE,
               width = 12,
-              withSpinner(
-                # plotlyOutput("detailed_timeseries", height = "500px"),
-                h3('timeseries plot'),
-                type = 4,
-                color = "#667eea"
-              )
+              uiOutput("queries_summary")
             )
-          )
+          ),
+          
+          # Dynamic query panels will be inserted here
+          uiOutput("query_panels")
         ),
         
         # Analytics Tab

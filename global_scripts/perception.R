@@ -747,3 +747,245 @@ calculate_perception_from_prompts <- function(brand_name,
 #' print(ttt2$summary)
 #' print(ttt2$stability_assessment)
 
+#' Calculate perception score from general responses that may or may not mention the brand
+#' @param brand_name Character, name of brand to score
+#' @param brand_aliases Character vector of brand name variations/aliases
+#' @param rel_responses Dataframe with 'responses' column containing text responses
+#' @param context_window Integer, number of characters around brand mention to analyze
+#' @return List with perception score and detailed metrics
+calculate_perception_from_prompts_sep <- function(brand_name,
+                                                  customer_id,
+                                                  rel_responses,
+                                                  context_window = 150) {
+  
+
+  # Initialize results storage
+  mention_analysis <- tibble(
+    response_id = integer(),
+    mentioned = logical(),
+    mention_count = integer(),
+    contexts = list()
+  )
+  
+  sentiment_results <- tibble(
+    response_id = integer(),
+    weighted_score = numeric(),
+    keyword_count = integer(),
+    keywords_found = list(),
+    positive_count = integer(),
+    negative_count = integer()
+  )
+  
+  # Process each response
+  for (i in seq_len(nrow(rel_responses))) {
+    response_text <- rel_responses$responses[i]
+    response_lower <- tolower(response_text)
+    
+    # Check if brand is mentioned
+    all_mentions <- find_all_mentions(response_text, brand_name)
+    is_mentioned <- length(all_mentions) > 0
+    
+    # Extract contexts around brand mentions
+    contexts <- if (is_mentioned) {
+      map(all_mentions, function(mention) {
+        start_pos <- max(1, mention$start - context_window)
+        end_pos <- min(nchar(response_text), mention$end + context_window)
+        substr(response_text, start_pos, end_pos)
+      })
+    } else {
+      list()
+    }
+    
+    # Store mention data
+    mention_analysis <- mention_analysis %>%
+      add_row(
+        response_id = i,
+        mentioned = is_mentioned,
+        mention_count = length(all_mentions),
+        contexts = list(contexts)
+      )
+    
+    # If not mentioned, assign neutral sentiment
+    if (!is_mentioned) {
+      sentiment_results <- sentiment_results %>%
+        add_row(
+          response_id = i,
+          weighted_score = 0,
+          keyword_count = 0,
+          keywords_found = list(character()),
+          positive_count = 0,
+          negative_count = 0
+        )
+      next
+    }
+    
+    # --- SENTIMENT ANALYSIS ---
+    # Combine all contexts for analysis
+    combined_context <- paste(contexts, collapse = " ")
+    combined_context_lower <- tolower(combined_context)
+    
+    found_sentiment_keywords <- list()
+    
+    for (tier_name in names(SENTIMENT_KEYWORDS_WEIGHTED)) {
+      tier <- SENTIMENT_KEYWORDS_WEIGHTED[[tier_name]]
+      
+      for (keyword in tier$keywords) {
+        if (str_detect(combined_context_lower, fixed(tolower(keyword)))) {
+          if (!keyword %in% names(found_sentiment_keywords)) {
+            found_sentiment_keywords[[keyword]] <- tier$weight
+          }
+        }
+      }
+    }
+    
+    # Calculate weighted score for this response
+    weighted_score <- sum(unlist(found_sentiment_keywords))
+    pos_count <- sum(unlist(found_sentiment_keywords) > 0)
+    neg_count <- sum(unlist(found_sentiment_keywords) < 0)
+    
+    sentiment_results <- sentiment_results %>%
+      add_row(
+        response_id = i,
+        weighted_score = weighted_score,
+        keyword_count = length(found_sentiment_keywords),
+        keywords_found = list(names(found_sentiment_keywords)),
+        positive_count = pos_count,
+        negative_count = neg_count
+      )
+  }
+  
+  # --- CALCULATE FINAL SCORES ---
+  
+  # Calculate mention rate
+  mention_rate <- mean(mention_analysis$mentioned) * 100
+  mentioned_responses <- mention_analysis %>% filter(mentioned)
+  
+  if (nrow(mentioned_responses) == 0) {
+    # Brand never mentioned - return neutral/zero scores
+    return(list(
+      perception_score = 50,  # Neutral
+      perception_accuracy_score = 0,
+      perception_sentiment_score = 50,  # Neutral
+      mention_rate = 0,
+      total_responses = nrow(rel_responses),
+      responses_with_brand = 0,
+      interpretation = "Brand not mentioned - insufficient data for perception measurement",
+      detail = list(
+        mention_analysis = mention_analysis,
+        sentiment_results = sentiment_results
+      )
+    ))
+  }
+  
+  # --- SENTIMENT SCORE ---
+  # Only calculate from responses that mention the brand
+  sent_results_mentioned <- sentiment_results %>%
+    filter(response_id %in% mentioned_responses$response_id)
+  
+  avg_weighted_score <- mean(sent_results_mentioned$weighted_score, na.rm = TRUE)
+  
+  # Normalize to 0-100 scale
+  # Score range: typically -10 to +10, map to 0-100
+  sentiment_score <- (avg_weighted_score + 10) / 20 * 100
+  sentiment_score <- max(0, min(100, sentiment_score))
+  
+  # Classify sentiment
+  sentiment_label <- case_when(
+    sentiment_score >= 70 ~ "Very Positive",
+    sentiment_score >= 55 ~ "Positive",
+    sentiment_score >= 45 ~ "Neutral",
+    sentiment_score >= 30 ~ "Negative",
+    TRUE ~ "Very Negative"
+  )
+  
+  # --- ACCURACY SCORE ---
+  # For accuracy, we need to extract factual information from contexts
+  # We'll measure consistency of facts mentioned across responses
+  
+  # Extract all contexts
+  all_contexts <- mentioned_responses %>%
+    select(contexts) %>%
+    flatten() %>%
+    unlist()
+  
+  if (length(all_contexts) == 0) {
+    accuracy_score <- 50  # Neutral default
+    accuracy_interpretation <- "Insufficient context for accuracy measurement"
+  } else {
+    # Measure text consistency across contexts
+    accuracy_result <- measure_text_consistency(all_contexts)
+    accuracy_score <- accuracy_result$score
+    
+    # Interpret accuracy
+    accuracy_interpretation <- case_when(
+      accuracy_score >= 85 ~ "Excellent - Highly consistent information",
+      accuracy_score >= 70 ~ "Good - Mostly consistent with minor variations",
+      accuracy_score >= 55 ~ "Fair - Moderate consistency",
+      accuracy_score >= 40 ~ "Poor - Significant inconsistencies",
+      TRUE ~ "Very Poor - Highly unreliable information"
+    )
+  }
+  
+  # --- CALCULATE OVERALL PERCEPTION SCORE ---
+  perception_score <- (PERCEPTION_WEIGHTS$accuracy * accuracy_score) +
+    (PERCEPTION_WEIGHTS$sentiment * sentiment_score)
+  
+  # Adjust by mention rate (if brand is rarely mentioned, reduce confidence)
+  # But don't penalize as much as prestige - perception matters when mentioned
+  mention_adjustment <- if (mention_rate < 30) {
+    0.7 + (mention_rate / 100) * 0.3  # Minimum 70% of score
+  } else {
+    1.0  # Full score if mentioned in 30%+ of responses
+  }
+  
+  adjusted_perception_score <- perception_score * mention_adjustment
+  
+  # Overall interpretation
+  overall_interpretation <- case_when(
+    adjusted_perception_score >= 80 ~ "Excellent perception - Positive and consistent",
+    adjusted_perception_score >= 65 ~ "Good perception - Generally favorable",
+    adjusted_perception_score >= 50 ~ "Fair perception - Neutral or mixed",
+    adjusted_perception_score >= 35 ~ "Poor perception - Some negative signals",
+    TRUE ~ "Very poor perception - Concerning signals"
+  )
+  
+  # Return comprehensive results
+  # return(list(
+  #   perception_score = round(adjusted_perception_score, 2),
+  #   perception_score_unadjusted = round(perception_score, 2),
+  #   perception_accuracy_score = round(accuracy_score, 2),
+  #   perception_sentiment_score = round(sentiment_score, 2),
+  #   mention_rate = round(mention_rate, 2),
+  #   mention_adjustment_factor = round(mention_adjustment, 2),
+  #   total_responses = nrow(rel_responses),
+  #   responses_with_brand = nrow(mentioned_responses),
+  #   interpretation = overall_interpretation,
+  #   accuracy_interpretation = accuracy_interpretation,
+  #   sentiment_label = sentiment_label,
+  #   detail = list(
+  #     mention_analysis = mention_analysis,
+  #     sentiment_results = sentiment_results,
+  #     sentiment_summary = list(
+  #       avg_weighted_score = round(avg_weighted_score, 2),
+  #       total_positive_keywords = sum(sent_results_mentioned$positive_count),
+  #       total_negative_keywords = sum(sent_results_mentioned$negative_count),
+  #       net_sentiment = sum(sent_results_mentioned$positive_count) - 
+  #         sum(sent_results_mentioned$negative_count)
+  #     )
+  #   ),
+  #   component_scores = list(
+  #     sentiment = list(
+  #       raw_score = avg_weighted_score,
+  #       normalized_score = sentiment_score,
+  #       label = sentiment_label
+  #     ),
+  #     accuracy = list(
+  #       score = accuracy_score,
+  #       interpretation = accuracy_interpretation
+  #     )
+  #   )
+  # ))
+  
+  return(round(adjusted_perception_score, 2))
+}
+

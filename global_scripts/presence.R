@@ -123,10 +123,6 @@ detect_brand_with_position <- function(text, brand_name) {
 calculate_presence_from_responses <- function(brand_name,
                                               presence_responses) {
   
-  # Compile brand patterns
-  all_brand_names <- c(brand_name, brand_aliases)
-  brand_patterns <- map(all_brand_names, ~paste0("\\b", escape_regex(.x), "\\b"))
-  
   # Initialize results storage
   presence_results <- tibble(
     group_name = character(),

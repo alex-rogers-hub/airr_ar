@@ -826,7 +826,11 @@ calculate_prestige_from_prompts_sep <- function(brand_name,
                                           where customer_id = ', customer_id,
                                           " and date = '", Sys.Date(),"';"))
     
-    other_brands <- str_split_1(other_brands_df$prestige_rank_comps_brands, " \\| ")
+    if(nrow(other_brands_df) == 0){
+      other_brands <- "NA"
+    } else {
+      other_brands <- str_split_1(other_brands_df$prestige_rank_comps_brands, " \\| ")
+    }
     
     # Find positions of other brands
     brand_positions_list <- map(unique(other_brands), function(brand) {
@@ -852,21 +856,23 @@ calculate_prestige_from_prompts_sep <- function(brand_name,
   
   if (nrow(mentioned_responses) == 0) {
     # Brand never mentioned - return zero scores
-    return(list(
-      prestige_score = 0,
-      prestige_rank_score = 0,
-      prestige_authority_score = 0,
-      prestige_leadership_score = 0,
-      mention_rate = 0,
-      total_responses = nrow(rel_responses),
-      responses_with_brand = 0,
-      detail = list(
-        mention_analysis = mention_analysis,
-        authority_results = authority_results,
-        leadership_results = leadership_results,
-        competitive_data = competitive_data
-      )
-    ))
+    # return(list(
+    #   prestige_score = 0,
+    #   prestige_rank_score = 0,
+    #   prestige_authority_score = 0,
+    #   prestige_leadership_score = 0,
+    #   mention_rate = 0,
+    #   total_responses = nrow(rel_responses),
+    #   responses_with_brand = 0,
+    #   detail = list(
+    #     mention_analysis = mention_analysis,
+    #     authority_results = authority_results,
+    #     leadership_results = leadership_results,
+    #     competitive_data = competitive_data
+    #   )
+    # ))
+    
+    return(0)
   }
   
   # Authority Score

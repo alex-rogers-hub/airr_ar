@@ -135,8 +135,12 @@ measure_name_consistency <- function(responses) {
   most_common_full <- names(name_counts)[which.max(name_counts)]
   most_common_last <- names(last_name_counts)[which.max(last_name_counts)]
   
-  # Agreement on last name is most important
-  last_name_agreement <- max(last_name_counts) / length(last_names[!is.na(last_names)])
+  if(is.null(most_common_last)){
+    last_name_agreement <- 1
+  } else {
+    # Agreement on last name is most important
+    last_name_agreement <- max(last_name_counts) / length(last_names[!is.na(last_names)])
+  }
   
   score <- last_name_agreement * 100
   
@@ -369,14 +373,20 @@ measure_response_consistency <- function(responses) {
       question = group$question
     )
     
+    score <- consistency_result$score
+    if (is.infinite(score)) score <- NA_real_
+    
+    agreement <- consistency_result$agreement_rate
+    if (is.infinite(agreement)) agreement <- NA_real_
+    
     tibble(
       question_group = group_name,
       question_text = group$question,
       data_type = group$type,
-      consistency_score = consistency_result$score,
+      consistency_score = score,
       unique_values = consistency_result$unique_count,
       most_common = consistency_result$most_common,
-      agreement_rate = consistency_result$agreement_rate,
+      agreement_rate = agreement,
       details = list(consistency_result$details)
     )
   })
@@ -862,19 +872,21 @@ calculate_perception_from_prompts_sep <- function(brand_name,
   
   if (nrow(mentioned_responses) == 0) {
     # Brand never mentioned - return neutral/zero scores
-    return(list(
-      perception_score = 50,  # Neutral
-      perception_accuracy_score = 0,
-      perception_sentiment_score = 50,  # Neutral
-      mention_rate = 0,
-      total_responses = nrow(rel_responses),
-      responses_with_brand = 0,
-      interpretation = "Brand not mentioned - insufficient data for perception measurement",
-      detail = list(
-        mention_analysis = mention_analysis,
-        sentiment_results = sentiment_results
-      )
-    ))
+    # return(list(
+    #   perception_score = 50,  # Neutral
+    #   perception_accuracy_score = 0,
+    #   perception_sentiment_score = 50,  # Neutral
+    #   mention_rate = 0,
+    #   total_responses = nrow(rel_responses),
+    #   responses_with_brand = 0,
+    #   interpretation = "Brand not mentioned - insufficient data for perception measurement",
+    #   detail = list(
+    #     mention_analysis = mention_analysis,
+    #     sentiment_results = sentiment_results
+    #   )
+    # ))
+    
+    return(50)
   }
   
   # --- SENTIMENT SCORE ---
@@ -908,7 +920,7 @@ calculate_perception_from_prompts_sep <- function(brand_name,
     flatten() %>%
     unlist()
   
-  if (length(all_contexts) == 0) {
+  if (length(all_contexts) < 2) {
     accuracy_score <- 50  # Neutral default
     accuracy_interpretation <- "Insufficient context for accuracy measurement"
   } else {

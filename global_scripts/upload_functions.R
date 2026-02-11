@@ -328,24 +328,25 @@ daily_prompt_loop <- function(model = "gpt-4o-mini"){
     
     if(nrow(cust_w_query) != 0){
       # get brand_name
-      brand_name <- dbGetQuery(con, paste0('select * from dim_customer
-                                            where customer_id = ', cust_w_query$customer_id))$customer_name
-      
-      # get scores
-      
-      presence_prompt_score <- presence_prompt_calc(brand_name,
-                                                    # cust_w_query$customer_id,
-                                                    rel_responses)
-      
-      prestige_prompt_score <- calculate_prestige_from_prompts_sep(brand_name,
-                                                                   cust_w_query$customer_id,
-                                                                   rel_responses)
-      
-      perception_prompt_score <- calculate_perception_from_prompts_sep(brand_name,
-                                                                       cust_w_query$customer_id,
-                                                                       rel_responses)
-      
-      dbExecute(con, "
+      for(cust in cust_w_query$customer_id){
+        brand_name <- dbGetQuery(con, paste0('select * from dim_customer
+                                            where customer_id = ', cust))$customer_name
+        
+        # get scores
+        
+        presence_prompt_score <- presence_prompt_calc(brand_name,
+                                                      # cust,
+                                                      rel_responses)
+        
+        prestige_prompt_score <- calculate_prestige_from_prompts_sep(brand_name,
+                                                                     cust,
+                                                                     rel_responses)
+        
+        perception_prompt_score <- calculate_perception_from_prompts_sep(brand_name,
+                                                                         cust,
+                                                                         rel_responses)
+        
+        dbExecute(con, "
       INSERT INTO fact_query_history (
         customer_id,
         query_id,
@@ -364,7 +365,7 @@ daily_prompt_loop <- function(model = "gpt-4o-mini"){
         persistence_score = EXCLUDED.persistence_score,
         airr_score = EXCLUDED.airr_score;
     ", params = list(
-      cust_w_query$customer_id,
+      cust,
       i,
       Sys.Date(),
       presence_prompt_score,
@@ -373,29 +374,30 @@ daily_prompt_loop <- function(model = "gpt-4o-mini"){
       0,
       0
     ))
-      
-      presence_history <- dbGetQuery(con, paste0("select date, presence_score from fact_query_history
-                                                 where customer_id = ", cust_w_query$customer_id, 
-                                                 " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
-      
-      if(nrow(presence_history) < 5){
-        persistence_prompt_score <- 100
-      } else {
-        persistence_prompt_score <- calculate_daily_persistence_sep(presence_history)
-      }
-      
-      todays_scores <- dbGetQuery(con, paste0("select presence_score, perception_score, prestige_score from fact_query_history
-                                             where customer_id = ", cust_w_query$customer_id,
-                                              " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
-      
-      airr_score <- todays_scores$perception_score*AIRR_WEIGHTS$perception + todays_scores$presence_score*AIRR_WEIGHTS$presence +
-        todays_scores$prestige_score*AIRR_WEIGHTS$prestige + persistence_prompt_score*AIRR_WEIGHTS$persistence
-      
-      dbExecute(con,paste0("update fact_query_history 
+        
+        presence_history <- dbGetQuery(con, paste0("select date, presence_score from fact_query_history
+                                                 where customer_id = ", cust, 
+                                                   " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
+        
+        if(nrow(presence_history) < 5){
+          persistence_prompt_score <- 100
+        } else {
+          persistence_prompt_score <- calculate_daily_persistence_sep(presence_history)
+        }
+        
+        todays_scores <- dbGetQuery(con, paste0("select presence_score, perception_score, prestige_score from fact_query_history
+                                             where customer_id = ", cust,
+                                                " and date = '", Sys.Date(), "' and query_id = ", i, ";"))
+        
+        airr_score <- todays_scores$perception_score*AIRR_WEIGHTS$perception + todays_scores$presence_score*AIRR_WEIGHTS$presence +
+          todays_scores$prestige_score*AIRR_WEIGHTS$prestige + persistence_prompt_score*AIRR_WEIGHTS$persistence
+        
+        dbExecute(con,paste0("update fact_query_history 
                            set persistence_score = ", persistence_prompt_score,
-                           ", airr_score = ", airr_score,
-                           " where customer_id = ", cust_w_query$customer_id,
-                           " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
+                             ", airr_score = ", airr_score,
+                             " where customer_id = ", cust,
+                             " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
+      }
     }
   }
 }
@@ -405,6 +407,7 @@ daily_prompt_loop <- function(model = "gpt-4o-mini"){
 create_prompt_airr <- function(customer_id,
                                query_string,
                                query_id_in,
+                               # comp_names_list,
                                model = "gpt-4o-mini"){
 
   query_list <- rep(query_string, each = 10)
@@ -424,6 +427,16 @@ create_prompt_airr <- function(customer_id,
       brand_name <- dbGetQuery(con, paste0('select * from dim_customer
                                             where customer_id = ', cust_w_query$customer_id))$customer_name
       
+      # get regular competitor brand names
+      
+      # comp_names <- dbGetQuery(con, paste0('select prestige_rank_comps_brands from fact_prestige_history
+      #                                       where customer_id = ', cust_w_query$customer_id,
+      #                                      " and date = '", Sys.Date(),"';"))$prestige_rank_comps_brands
+      # 
+      # 
+      # comp_names_split <- strsplit(comp_names, " \\| ")[[1]]
+      
+      # comp_names <- comp_names_list
       # get scores
       
       presence_prompt_score <- presence_prompt_calc(brand_name,
@@ -471,6 +484,7 @@ create_prompt_airr <- function(customer_id,
                                                  where customer_id = ", cust_w_query$customer_id, 
                                                  " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
       
+      
       if(nrow(presence_history) < 5){
         persistence_prompt_score <- 100
       } else {
@@ -479,7 +493,7 @@ create_prompt_airr <- function(customer_id,
       
       todays_scores <- dbGetQuery(con, paste0("select presence_score, perception_score, prestige_score from fact_query_history
                                              where customer_id = ", cust_w_query$customer_id,
-                                              " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
+                                              " and date = '", Sys.Date(), "' and query_id = ", i, ";"))
       
       airr_score <- todays_scores$perception_score*AIRR_WEIGHTS$perception + todays_scores$presence_score*AIRR_WEIGHTS$presence +
         todays_scores$prestige_score*AIRR_WEIGHTS$prestige + persistence_prompt_score*AIRR_WEIGHTS$persistence
@@ -491,4 +505,183 @@ create_prompt_airr <- function(customer_id,
                            " and date <= '", Sys.Date(), "' and query_id = ", i, ";"))
     }
   }
+}
+
+
+
+create_prompt_airr_multipleOLD <- function(customer_ids,
+                               query_string,
+                               query_id_in,
+                               # comp_names_list,
+                               model = "gpt-4o-mini"){
+  
+  query_list <- rep(query_string, each = 10)
+  
+  rel_responses <- prompt_queries(query_list) 
+  
+  for(comp in customer_ids){
+    brand_name <- dbGetQuery(con, paste0('select * from dim_customer
+                                            where customer_id = ', comp))$customer_name
+    
+    presence_prompt_score <- presence_prompt_calc(brand_name,
+                                                  # cust_w_query$customer_id,
+                                                  rel_responses)
+    
+    prestige_prompt_score <- calculate_prestige_from_prompts_sep(brand_name,
+                                                                 comp,
+                                                                 rel_responses)
+    
+    perception_prompt_score <- calculate_perception_from_prompts_sep(brand_name,
+                                                                     comp,
+                                                                     rel_responses)
+    
+    dbExecute(con, "
+      INSERT INTO fact_query_history (
+        customer_id,
+        query_id,
+        date,
+        presence_score,
+        perception_score,
+        prestige_score,
+        persistence_score,
+        airr_score
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (customer_id, query_id, date) 
+      DO UPDATE SET
+        presence_score = EXCLUDED.presence_score,
+        perception_score = EXCLUDED.perception_score,
+        prestige_score = EXCLUDED.prestige_score,
+        persistence_score = EXCLUDED.persistence_score,
+        airr_score = EXCLUDED.airr_score;
+    ", params = list(
+      comp,
+      query_id_in,
+      Sys.Date(),
+      presence_prompt_score,
+      perception_prompt_score,
+      prestige_prompt_score,
+      0,
+      0
+    ))
+    
+    presence_history <- dbGetQuery(con, paste0("select date, presence_score from fact_query_history
+                                                 where customer_id = ", comp, 
+                                               " and date <= '", Sys.Date(), "' and query_id = ", query_id_in, ";"))
+    
+    if(nrow(presence_history) < 5){
+      persistence_prompt_score <- 100
+    } else {
+      persistence_prompt_score <- calculate_daily_persistence_sep(presence_history)
+    }
+    
+    todays_scores <- dbGetQuery(con, paste0("select presence_score, perception_score, prestige_score from fact_query_history
+                                             where customer_id = ", comp,
+                                            " and date = '", Sys.Date(), "' and query_id = ", query_id_in, ";"))
+    
+    airr_score <- todays_scores$perception_score*AIRR_WEIGHTS$perception + todays_scores$presence_score*AIRR_WEIGHTS$presence +
+      todays_scores$prestige_score*AIRR_WEIGHTS$prestige + persistence_prompt_score*AIRR_WEIGHTS$persistence
+    
+    dbExecute(con,paste0("update fact_query_history 
+                           set persistence_score = ", persistence_prompt_score,
+                         ", airr_score = ", airr_score,
+                         " where customer_id = ", comp,
+                         " and date <= '", Sys.Date(), "' and query_id = ", query_id_in, ";"))
+    
+  }
+}
+
+
+create_prompt_airr_multiple <- function(customer_ids,
+                                        query_string,
+                                        query_id_in,
+                                        model = "gpt-4o-mini"){
+  
+  cat("=== Starting create_prompt_airr_multiple ===\n")
+  cat("Processing", length(customer_ids), "customers\n")
+  
+  cat("Step A: Calling prompt_queries\n")
+  query_list <- rep(query_string, each = 10)
+  rel_responses <- prompt_queries(query_list) 
+  cat("Got", nrow(rel_responses), "responses\n")
+  
+  for(i in seq_along(customer_ids)){
+    comp <- customer_ids[i]
+    cat("Processing customer", i, "of", length(customer_ids), "(ID:", comp, ")\n")
+    
+    cat("  Getting brand name...\n")
+    brand_name <- dbGetQuery(con, paste0('select * from dim_customer
+                                            where customer_id = ', comp))$customer_name
+    cat("  Brand:", brand_name, "\n")
+    
+    cat("  Calculating presence...\n")
+    presence_prompt_score <- presence_prompt_calc(brand_name, rel_responses)
+    
+    cat("  Calculating prestige...\n")
+    prestige_prompt_score <- calculate_prestige_from_prompts_sep(brand_name, comp, rel_responses)
+    
+    cat("  Calculating perception...\n")
+    perception_prompt_score <- calculate_perception_from_prompts_sep(brand_name, comp, rel_responses)
+    
+    cat("  Inserting scores...\n")
+    dbExecute(con, "
+      INSERT INTO fact_query_history (
+        customer_id,
+        query_id,
+        date,
+        presence_score,
+        perception_score,
+        prestige_score,
+        persistence_score,
+        airr_score
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (customer_id, query_id, date) 
+      DO UPDATE SET
+        presence_score = EXCLUDED.presence_score,
+        perception_score = EXCLUDED.perception_score,
+        prestige_score = EXCLUDED.prestige_score,
+        persistence_score = EXCLUDED.persistence_score,
+        airr_score = EXCLUDED.airr_score;
+    ", params = list(
+      comp,
+      query_id_in,
+      Sys.Date(),
+      presence_prompt_score,
+      perception_prompt_score,
+      prestige_prompt_score,
+      0,
+      0
+    ))
+    
+    cat("  Getting presence history...\n")
+    presence_history <- dbGetQuery(con, paste0("select date, presence_score from fact_query_history
+                                                 where customer_id = ", comp, 
+                                               " and date <= '", Sys.Date(), "' and query_id = ", query_id_in, ";"))
+    
+    if(nrow(presence_history) < 5){
+      persistence_prompt_score <- 100
+    } else {
+      cat("  Calculating persistence...\n")
+      persistence_prompt_score <- calculate_daily_persistence_sep(presence_history)
+    }
+    
+    cat("  Getting today's scores...\n")
+    todays_scores <- dbGetQuery(con, paste0("select presence_score, perception_score, prestige_score from fact_query_history
+                                             where customer_id = ", comp,
+                                            " and date = '", Sys.Date(), "' and query_id = ", query_id_in, ";"))
+    
+    cat("  Calculating AIRR score...\n")
+    airr_score <- todays_scores$perception_score*AIRR_WEIGHTS$perception + todays_scores$presence_score*AIRR_WEIGHTS$presence +
+      todays_scores$prestige_score*AIRR_WEIGHTS$prestige + persistence_prompt_score*AIRR_WEIGHTS$persistence
+    
+    cat("  Updating with final scores...\n")
+    dbExecute(con,paste0("update fact_query_history 
+                           set persistence_score = ", persistence_prompt_score,
+                         ", airr_score = ", airr_score,
+                         " where customer_id = ", comp,
+                         " and date <= '", Sys.Date(), "' and query_id = ", query_id_in, ";"))
+    
+    cat("  Completed customer", comp, "\n")
+  }
+  
+  cat("=== create_prompt_airr_multiple completed ===\n")
 }

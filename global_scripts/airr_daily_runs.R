@@ -132,6 +132,6 @@ source("global_scripts/upload_functions.R")
 source("global_scripts/app_helper_functions.R")
 
 # running the below runs by default in "gpt-4o-mini". Add "gpt-4o" or other model name to change this
-# daily_refresh_loop()
-# daily_prompt_loop()
+daily_refresh_loop()
+daily_prompt_loop()
 

@@ -150,5 +150,80 @@ get_latest_query_scores <- function(query_id, customer_id) {
 }
 
 
+addPromptForEveryone <- function(prompt_string) {
+  cat("=== Starting addPromptForEveryone ===\n")
+  
+  tryCatch({
+    
+    cat("Step 1: Getting customers\n")
+    all_customers <- dbGetQuery(
+      con,
+      "SELECT DISTINCT customer_id FROM dim_customer"
+    )$customer_id
+    cat("Found", length(all_customers), "customers\n")
+    
+    cat("Step 2: Starting transaction\n")
+    dbBegin(con)
+    
+    cat("Step 3: Inserting query\n")
+    query <- "INSERT INTO dim_query (query_string) 
+              VALUES ($1) 
+              RETURNING query_id"
+    
+    result <- dbGetQuery(con, query, params = list(prompt_string))
+    query_id <- result$query_id
+    cat("Query inserted with ID:", query_id, "\n")
+    
+    cat("Step 4: Building junction table values\n")
+    current_date <- Sys.Date()
+    values_strings <- paste0(
+      "(",
+      all_customers,
+      ", ",
+      query_id,
+      ", '",
+      current_date,
+      "')"
+    )
+    
+    cat("Step 5: Inserting into junction table\n")
+    query <- paste0("
+      INSERT INTO dim_cust_query (
+        customer_id,
+        query_id,
+        date_added
+      )
+      VALUES ",
+                    paste(values_strings, collapse = ", "),
+                    " ON CONFLICT (customer_id, query_id)
+      DO UPDATE SET
+        date_added = EXCLUDED.date_added
+    ")
+    
+    dbExecute(con, query)
+    cat("Junction table updated\n")
+    
+    cat("Step 6: Committing transaction\n")
+    dbCommit(con)
+    
+    cat("Step 7: About to call create_prompt_airr_multiple\n")
+    create_prompt_airr_multiple(all_customers, prompt_string, query_id)
+    cat("Step 8: Finished create_prompt_airr_multiple\n")
+    
+    cat("=== addPromptForEveryone completed successfully ===\n")
+    return(query_id)
+    
+  }, error = function(e) {
+    cat("=== ERROR in addPromptForEveryone ===\n")
+    cat("Error message:", e$message, "\n")
+    cat("Error occurred at step above\n")
+    
+    tryCatch(dbRollback(con), error = function(e2) {
+      cat("Could not rollback:", e2$message, "\n")
+    })
+    
+    stop(e)
+  })
+}
 
 

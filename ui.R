@@ -34,16 +34,20 @@ ui <- dashboardPage(
     useShinyjs(),
     sidebarMenu(
       id = "sidebar",
-      menuItem("AiRR Dashboard", tabName = "airr_dashboard", icon = icon("dashboard")),
-      menuItem("Prompt Performance", tabName = "prompt_performance", icon = icon("chart-line")),
+      # menuItem("AiRR Dashboard", tabName = "airr_dashboard", icon = icon("dashboard")),
+      # menuItem("Prompt Performance", tabName = "prompt_performance", icon = icon("chart-line")),
       # menuItem("Analytics", tabName = "analytics", icon = icon("chart-bar")),
-      menuItem("Profile", tabName = "profile", icon = icon("user"))
+      # menuItem("Profile", tabName = "profile", icon = icon("user")),
+      menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale"))
     )
   ),
   
   # Body
   dashboardBody(
     tags$head(
+      tags$link(rel = "icon", type = "image/x-icon", href = "favicon.ico"),
+      tags$link(rel = "shortcut icon", type = "image/x-icon", href = "favicon.ico"),
+      tags$title("AiRR"),
       tags$style(HTML(custom_css))
     ),
     
@@ -79,7 +83,7 @@ ui <- dashboardPage(
           # Register Form
           conditionalPanel(
             condition = "input.show_register == true",
-            textInput("customer_name", NULL, placeholder = "Username"),
+            textInput("register_customer_name", NULL, placeholder = "Username"),
             textInput("register_email", NULL, placeholder = "Email"),
             passwordInput("register_password", NULL, placeholder = "Password"),
             passwordInput("register_password_confirm", NULL, placeholder = "Confirm Password"),
@@ -112,7 +116,7 @@ ui <- dashboardPage(
           
           fluidRow(
             box(
-              title = "Persistence",
+              title = "Change over time",
               status = "primary",
               solidHeader = TRUE,
               width = 8,
@@ -135,7 +139,7 @@ ui <- dashboardPage(
                 color = "#667eea"
               )
             )
-          ),
+          )
           
           # fluidRow(
           #   box(
@@ -167,7 +171,15 @@ ui <- dashboardPage(
                 "prompt_input",
                 "Enter your prompt:",
                 placeholder = "Type your prompt here...",
-                width = "100%"
+                width = "60%"
+              ),
+              selectInput(
+                "competitor_select",
+                "Select Competitor for comparison:",
+                choices = NULL,  # Will be populated by server
+                selected = NULL,
+                multiple = TRUE,
+                width = "40%"
               ),
               actionButton(
                 "submit_prompt_btn",
@@ -246,6 +258,191 @@ ui <- dashboardPage(
               width = 6,
               h3('account stats area')
               # uiOutput("account_stats")
+            )
+          )
+        ),
+        tabItem(
+          tabName = "comparisons",
+          
+          fluidRow(
+            box(
+              title = "Customer Rankings by AIRR Score",
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+              DTOutput("leaderboard_table")
+            )
+          ),
+          # fluidRow(
+          #   box(
+          #     title = "AIRR Score Trends Over Time",
+          #     status = "primary",
+          #     solidHeader = TRUE,
+          #     width = 12,
+          #     collapsible = TRUE,
+          #     plotlyOutput("leaderboard_chart", height = "500px")
+          #   )
+          # ),
+          fluidRow(
+            box(
+              title = "Score Trends Over Time",
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              collapsible = TRUE,
+              tabsetPanel(
+                id = "leaderboard_chart_tabs",
+                type = "tabs",
+                tabPanel(
+                  "AIRR Score",
+                  value = "airr",
+                  plotlyOutput("leaderboard_chart_airr", height = "500px")
+                ),
+                tabPanel(
+                  "Presence Score",
+                  value = "presence",
+                  plotlyOutput("leaderboard_chart_presence", height = "500px")
+                ),
+                tabPanel(
+                  "Perception Score",
+                  value = "perception",
+                  plotlyOutput("leaderboard_chart_perception", height = "500px")
+                ),
+                tabPanel(
+                  "Prestige Score",
+                  value = "prestige",
+                  plotlyOutput("leaderboard_chart_prestige", height = "500px")
+                ),
+                tabPanel(
+                  "Persistence Score",
+                  value = "persistence",
+                  plotlyOutput("leaderboard_chart_persistence", height = "500px")
+                )
+              )
+            )
+          ),
+          fluidRow(
+            box(
+              title = "Select Customers to Compare",
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              fluidRow(
+                column(4,
+                       selectInput(
+                         "compare_customer_1",
+                         "Customer 1:",
+                         choices = NULL,
+                         selected = NULL
+                       )
+                ),
+                column(4,
+                       selectInput(
+                         "compare_customer_2",
+                         "Customer 2:",
+                         choices = NULL,
+                         selected = NULL
+                       )
+                ),
+                column(4,
+                       selectInput(
+                         "compare_customer_3",
+                         "Customer 3:",
+                         choices = NULL,
+                         selected = NULL
+                       )
+                )
+              ),
+              fluidRow(
+                column(12,
+                       plotlyOutput("spider_chart_compare", height = "600px"))
+              )
+            )
+          ),
+          fluidRow(
+            box(
+              title = "Add New Prompt for All Customers",
+              status = "primary",
+              solidHeader = TRUE,
+              width = 12,
+              fluidRow(
+                column(
+                  width = 9,
+                  textInput(
+                    "new_prompt_input",
+                    NULL,  # No label since box has title
+                    placeholder = "Enter your prompt here...",
+                    width = "100%"
+                  )
+                ),
+                column(
+                  width = 3,
+                  # Add margin to align button with input
+                  tags$div(
+                    style = "margin-top: 0px;",
+                    actionButton(
+                      "submit_prompt_to_all_btn",
+                      "Add Prompt",
+                      icon = icon("plus"),
+                      class = "btn-primary",
+                      width = "100%"
+                    )
+                  )
+                )
+              ),
+              fluidRow(
+                column(
+                  width = 9,
+                  selectInput(
+                    "query_select",
+                    "Choose a prompt to analyze:",
+                    choices = NULL,
+                    selected = NULL,
+                    width = "100%"
+                  )
+                )
+              ),
+              fluidRow(
+                column(
+                  width = 12,
+                  DTOutput("query_top10_table")
+                )
+              )
+              # fluidRow(
+              #   column(
+              #     width = 12,
+              #     tabsetPanel(
+              #       id = "query_chart_tabs",
+              #       type = "tabs",
+              #       tabPanel(
+              #         "AIRR Score",
+              #         value = "airr",
+              #         plotlyOutput("query_chart_airr", height = "500px")
+              #       ),
+              #       tabPanel(
+              #         "Presence Score",
+              #         value = "presence",
+              #         plotlyOutput("query_chart_presence", height = "500px")
+              #       ),
+              #       tabPanel(
+              #         "Perception Score",
+              #         value = "perception",
+              #         plotlyOutput("query_chart_perception", height = "500px")
+              #       ),
+              #       tabPanel(
+              #         "Prestige Score",
+              #         value = "prestige",
+              #         plotlyOutput("query_chart_prestige", height = "500px")
+              #       ),
+              #       tabPanel(
+              #         "Persistence Score",
+              #         value = "persistence",
+              #         plotlyOutput("query_chart_persistence", height = "500px")
+              #       )
+              #     )
+              #   )
+              # )
             )
           )
         )

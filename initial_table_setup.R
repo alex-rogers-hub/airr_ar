@@ -151,6 +151,38 @@ CREATE TABLE fact_query_history (
 );
 ")
 
+
+dbExecute(con, "
+CREATE TABLE fact_comp_history (
+    customer_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    comp_brand VARCHAR(255) NOT NULL,
+    presence_score NUMERIC(10, 4),
+    perception_score NUMERIC(10, 4),
+    prestige_score NUMERIC(10, 4),
+    persistence_score NUMERIC(10, 4),
+    airr_score NUMERIC(10, 4),
+    PRIMARY KEY (customer_id, date, comp_brand),
+    FOREIGN KEY (customer_id) REFERENCES dim_customer(customer_id) ON DELETE CASCADE
+);
+")
+
+dbExecute(con, "
+CREATE TABLE fact_query_comp_history (
+    customer_id INTEGER NOT NULL,
+    query_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    comp_brand VARCHAR(255) NOT NULL,
+    presence_score NUMERIC(10, 4),
+    perception_score NUMERIC(10, 4),
+    prestige_score NUMERIC(10, 4),
+    persistence_score NUMERIC(10, 4),
+    airr_score NUMERIC(10, 4),
+    PRIMARY KEY (customer_id, date, query_id, comp_brand),
+    FOREIGN KEY (customer_id) REFERENCES dim_customer(customer_id) ON DELETE CASCADE
+);
+")
+
 # Create indexes
 dbExecute(con, "CREATE INDEX idx_presence_customer_date ON fact_presence_history(customer_id, date);")
 dbExecute(con, "CREATE INDEX idx_perception_customer_date ON fact_perception_history(customer_id, date);")
@@ -166,6 +198,8 @@ dbExecute(con, "CREATE INDEX idx_query_query_id ON dim_query(query_id);")
 dbExecute(con, "CREATE INDEX idx_cust_query_query_id ON dim_cust_query(query_id);")
 dbExecute(con, "CREATE INDEX idx_query_history_query_id ON fact_query_history(query_id);")
 dbExecute(con, "CREATE INDEX idx_query_history_customer ON fact_query_history(customer_id);")
+dbExecute(con, "CREATE INDEX idx_comp_history_customer ON fact_comp_history(customer_id);")
+dbExecute(con, "CREATE INDEX idx_query_comp_history_customer ON fact_query_comp_history(customer_id);")
 
 
 # Verify tables were created
@@ -205,5 +239,31 @@ add_customer <- function(con, customer_name) {
 #                       set password_hash = '",hash_password(cname),
 #                      "' where customer_name = '", cname,
 #                      "';"))
+
+# dbExecute(con, "
+# delete from dim_query
+# where query_id < 83;
+# ")
+
+
+cust_list <- c('Wix', 'Squarespace', 'Webflow', 'Wordpress',
+               'Uber Eats', 'Instacart', 'Doordash', 'Deliveroo',
+               'Ro', 'Hims & Hers', 'Keeps', 'Lemonaid Health',
+               'Bud Light', 'Michelob Ultra', 'Coors Light', 'Miller Light',
+               'Rocket', 'Redfin', 'Zillow', 'Opendoor')
+
+cust_list <- c('Shopify',
+               'Amazon Fresh', 'Walmart Delivery',
+               'Roman', 'One Medical','Teladoc Health',
+               'Corona Extra', 'Miller Lite',
+               'Zillow','Realtor.com','SoFi')
+
+for (customer_name in cust_list){
+  customer_id <- create_user(customer_name, paste0(substring(customer_name,1,2),"@",substring(customer_name,1,3),".com"), customer_name)
+  user_create_airr(customer_name)
+}
+
+
+
 
 

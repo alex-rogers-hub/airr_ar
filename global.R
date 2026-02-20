@@ -18,8 +18,62 @@ library(digest) # for password hashing
 library(DT)
 library(zoo)
 library(pool)
-library(shinycssloaders) 
+library(shinycssloaders)
+library(future)
+library(promises)
 
+# ============================================
+# Brand Theme (change these to update all colours)
+# ============================================
+BRAND_THEME <- list(
+  # Primary colours from logo
+  gold = "#D4A843",
+  gold_dark = "#B8922E",
+  gold_light = "#E8C96A",
+  
+  # Dark palette
+  bg_dark = "#1A1A1A",
+  surface_dark = "#2D2D2D",
+  surface_mid = "#3A3A3A",
+  
+  # Accent
+  red = "#C0392B",
+  red_light = "#E74C3C",
+  
+  # Text
+  text_light = "#F5F5F0",
+  text_muted = "#9E9E9E",
+  text_dark = "#1A1A1A",
+  
+  # Functional colours
+  success = "#27AE60",
+  warning = "#F39C12",
+  info = "#3498DB",
+  danger = "#C0392B",
+  
+  # Score card colours (4 P's)
+  presence = "#27AE60",
+  perception = "#D4A843",
+  prestige = "#8E44AD",
+  persistence = "#2980B9",
+  
+  # Competitor chart colours (distinct, professional)
+  comp_palette = c("#E74C3C", "#3498DB", "#2ECC71", "#9B59B6", 
+                   "#E67E22", "#1ABC9C", "#34495E", "#F39C12",
+                   "#16A085", "#C0392B"),
+  
+  # Chart
+  main_line = "#D4A843",
+  grid = "rgba(255, 255, 255, 0.08)",
+  
+  # Gradients
+  gradient_primary = "linear-gradient(135deg, #D4A843 0%, #B8922E 100%)",
+  gradient_dark = "linear-gradient(135deg, #2D2D2D 0%, #1A1A1A 100%)",
+  gradient_header = "linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%)"
+)
+
+setwd('/home/aarogers/AiRR')
+# setwd('/srv/shiny-server/AiRR')
 print(getwd())
 # Color palette
 app_colors <- list(
@@ -49,14 +103,14 @@ plotly_theme <- list(
 )
 
 # Create connection
-con <- dbConnect(
-  RPostgres::Postgres(),
-  dbname = Sys.getenv("DB_NAME"),
-  host = Sys.getenv("DB_HOST"),
-  port = Sys.getenv("DB_PORT"),
-  user = Sys.getenv("DB_USER"),
-  password = Sys.getenv("DB_PASSWORD")
-)
+# con <- dbConnect(
+#   RPostgres::Postgres(),
+#   dbname = Sys.getenv("DB_NAME"),
+#   host = Sys.getenv("DB_HOST"),
+#   port = Sys.getenv("DB_PORT"),
+#   user = Sys.getenv("DB_USER"),
+#   password = Sys.getenv("DB_PASSWORD")
+# )
 
 pool <- dbPool(
   drv = RPostgres::Postgres(),
@@ -77,12 +131,12 @@ hash_password <- function(password) {
 }
 
 # Helper function to verify user credentials
-verify_user <- function(customer_name, password) {
-  query <- "SELECT customer_id, customer_name, password_hash, email 
-            FROM dim_customer 
-            WHERE customer_name = $1"
+verify_user <- function(email, password) {
+  query <- "SELECT login_id, email, password_hash 
+            FROM dim_user 
+            WHERE email = $1"
   
-  result <- dbGetQuery(pool, query, params = list(customer_name))
+  result <- dbGetQuery(pool, query, params = list(email))
   
   if (nrow(result) == 0) {
     return(NULL)
@@ -96,19 +150,19 @@ verify_user <- function(customer_name, password) {
 }
 
 # Helper function to create new user
-create_user <- function(customer_name, email, password) {
+create_user <- function(email, password) {
   tryCatch({
-    query <- "INSERT INTO dim_customer (customer_name, date_added, email, password_hash) 
-              VALUES ($1, $2, $3, $4) 
-              RETURNING customer_id"
+    query <- "INSERT INTO dim_user (date_added, email, password_hash) 
+              VALUES ($1, $2, $3) 
+              RETURNING login_id"
     
     result <- dbGetQuery(
       pool, 
       query, 
-      params = list(customer_name, Sys.Date(), email, hash_password(password))
+      params = list(Sys.Date(), email, hash_password(password))
     )
     
-    return(result$customer_id)
+    return(result$login_id)
   }, error = function(e) {
     return(NULL)
   })

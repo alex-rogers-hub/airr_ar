@@ -673,7 +673,7 @@ test_prestige_stability <- function(brand_name,
 #' @param temperature Numeric, LLM temperature parameter
 #' @return List with prestige score and detailed metrics
 calculate_prestige_from_prompts_sep <- function(brand_name,
-                                            customer_id,
+                                                brand_id,
                                             rel_responses,
                                             context_window = 150,
                                             model = "gpt-4o-mini",
@@ -822,9 +822,10 @@ calculate_prestige_from_prompts_sep <- function(brand_name,
     # --- COMPETITIVE POSITIONING ---
     # Find other brands mentioned in the same response - pull competitors from history table
     
-    other_brands_df <- dbGetQuery(con,paste0('select prestige_rank_comps_brands from fact_prestige_history
-                                          where customer_id = ', customer_id,
-                                          " and date = '", Sys.Date(),"';"))
+    other_brands_df <- dbGetQuery(con,
+                                  "SELECT prestige_rank_comps_brands FROM fact_prestige_history
+       WHERE brand_id = $1 AND date = $2;",
+                                  params = list(brand_id, Sys.Date()))
     
     if(nrow(other_brands_df) == 0){
       other_brands <- "NA"

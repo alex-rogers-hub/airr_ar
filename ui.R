@@ -1,13 +1,17 @@
 source("global.R")
 source("custom_css_stuff.R")
 
-
 ui <- dashboardPage(
   skin = "blue",
   
   # Header
   dashboardHeader(
-    title = "AiRR",
+    # title = "AiRR",
+    title = tags$a(
+      href = "#",
+      tags$img(src = "AiRR_logo.jpg", height = "40px", style = "margin-top: -5px;"),
+      style = "text-decoration: none;"
+    ),
     tags$li(
       class = "dropdown",
       style = "padding: 8px;",
@@ -34,11 +38,9 @@ ui <- dashboardPage(
     useShinyjs(),
     sidebarMenu(
       id = "sidebar",
-      # menuItem("AiRR Dashboard", tabName = "airr_dashboard", icon = icon("dashboard")),
-      # menuItem("Prompt Performance", tabName = "prompt_performance", icon = icon("chart-line")),
-      # menuItem("Analytics", tabName = "analytics", icon = icon("chart-bar")),
-      # menuItem("Profile", tabName = "profile", icon = icon("user")),
-      menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale"))
+      menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard")),
+      menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale")),
+      menuItem("Account", tabName = "account", icon = icon("user-cog"))
     )
   ),
   
@@ -53,7 +55,9 @@ ui <- dashboardPage(
     
     useShinyjs(),
     
-    # Login/Register UI
+    # ============================================
+    # LOGIN / REGISTER
+    # ============================================
     conditionalPanel(
       condition = "output.logged_in == false",
       div(
@@ -67,10 +71,9 @@ ui <- dashboardPage(
           class = "login-body",
           uiOutput("auth_alert"),
           
-          # Login Form
           conditionalPanel(
             condition = "input.show_register == false || input.show_register == null",
-            textInput("customer_name", NULL, placeholder = "Username"),
+            textInput("login_email", NULL, placeholder = "Email"),
             passwordInput("login_password", NULL, placeholder = "Password"),
             actionButton("login_btn", "Sign In", class = "btn-login"),
             div(
@@ -80,10 +83,9 @@ ui <- dashboardPage(
             )
           ),
           
-          # Register Form
           conditionalPanel(
             condition = "input.show_register == true",
-            textInput("register_customer_name", NULL, placeholder = "Username"),
+            textInput("register_brand_name", NULL, placeholder = "Brand Name"),
             textInput("register_email", NULL, placeholder = "Email"),
             passwordInput("register_password", NULL, placeholder = "Password"),
             passwordInput("register_password_confirm", NULL, placeholder = "Confirm Password"),
@@ -98,175 +100,246 @@ ui <- dashboardPage(
       )
     ),
     
-    # Dashboard UI (shown when logged in)
+    # ============================================
+    # MAIN APP (logged in)
+    # ============================================
     conditionalPanel(
       condition = "output.logged_in == true",
       
       tabItems(
-        # Dashboard Tab
-        tabItem(
-          tabName = "airr_dashboard",
-          
-          fluidRow(
-            valueBoxOutput("metric_box_1", width = 4)
-            # valueBoxOutput("metric_box_2", width = 3),
-            # valueBoxOutput("metric_box_3", width = 3),
-            # valueBoxOutput("metric_box_4", width = 3)
-          ),
-          
-          fluidRow(
-            box(
-              title = "Change over time",
-              status = "primary",
-              solidHeader = TRUE,
-              width = 8,
-              withSpinner(
-                plotlyOutput("timeseries_chart", height = "400px"),
-                # h3('timeseries chart here'),
-                type = 4,
-                color = "#667eea"
-              )
-            ),
-            
-            box(
-              title = "The 4 'Ps'",
-              status = "primary",
-              solidHeader = TRUE,
-              width = 4,
-              withSpinner(
-                plotlyOutput("spider_chart", height = "400px"),
-                type = 4,
-                color = "#667eea"
-              )
-            )
-          )
-          
-          # fluidRow(
-          #   box(
-          #     title = "Recent Activity",
-          #     status = "info",
-          #     solidHeader = TRUE,
-          #     width = 12,
-          #     withSpinner(
-          #       # DT::dataTableOutput("activity_table"),
-          #       h3('output table here'),
-          #       type = 4,
-          #       color = "#667eea"
-          #     )
-          #   )
-          # )
-        ),
         
-        # Performance Tab
+        # ============================================
+        # DASHBOARD TAB
+        # ============================================
         tabItem(
-          tabName = "prompt_performance",
+          tabName = "dashboard",
+          # --- Score Cards Row ---
+          uiOutput("dash_score_cards_row"),
+          br(),
           
+          # --- Performance Overview: Trend + Spider ---
           fluidRow(
-            box(
-              title = "Submit prompt for tracking",
-              status = "primary",
-              solidHeader = TRUE,
+            column(
               width = 12,
-              textInput(
-                "prompt_input",
-                "Enter your prompt:",
-                placeholder = "Type your prompt here...",
-                width = "60%"
-              ),
-              selectInput(
-                "competitor_select",
-                "Select Competitor for comparison:",
-                choices = NULL,  # Will be populated by server
-                selected = NULL,
-                multiple = TRUE,
-                width = "40%"
-              ),
-              actionButton(
-                "submit_prompt_btn",
-                "Submit Prompt",
-                icon = icon("paper-plane"),
-                class = "btn-primary",
-                style = "margin-top: 10px; padding: 10px 20px; font-weight: 600;"
+              div(
+                class = "box",
+                style = "border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 20px;",
+                
+                # Header with download
+                div(
+                  style = "display: flex; justify-content: space-between; align-items: center; 
+                           margin-bottom: 15px;",
+                  h4(style = "margin: 0; font-weight: 600; color: #2d3748;", 
+                     "Performance Overview"),
+                  downloadButton("download_brand_data", "Export Data",
+                                 class = "btn-download")
+                ),
+                # Charts side by side
+                div(
+                  class = "chart-row-flex",
+                  div(
+                    class = "chart-col-trend",
+                    tabsetPanel(
+                      id = "dash_chart_tabs",
+                      type = "tabs",
+                      tabPanel("AIRR Score",
+                               withSpinner(plotlyOutput("dash_chart_airr", height = "420px"),
+                                           type = 4, color = "#667eea")),
+                      tabPanel("Presence",
+                               withSpinner(plotlyOutput("dash_chart_presence", height = "420px"),
+                                           type = 4, color = "#667eea")),
+                      tabPanel("Perception",
+                               withSpinner(plotlyOutput("dash_chart_perception", height = "420px"),
+                                           type = 4, color = "#667eea")),
+                      tabPanel("Prestige",
+                               withSpinner(plotlyOutput("dash_chart_prestige", height = "420px"),
+                                           type = 4, color = "#667eea")),
+                      tabPanel("Persistence",
+                               withSpinner(plotlyOutput("dash_chart_persistence", height = "420px"),
+                                           type = 4, color = "#667eea"))
+                    )
+                  ),
+                  div(
+                    class = "chart-col-spider",
+                    h5(style = "font-weight: 600; color: #4a5568; margin-bottom: 10px; 
+                               text-align: center;",
+                       "Brand Comparison"),
+                    withSpinner(
+                      plotlyOutput("dash_spider_compare", height = "400px"),
+                      type = 4, color = "#667eea"
+                    )
+                  )
+                )
               )
             )
           ),
           
+          br(),
+          
+          # --- Rankings Table ---
           fluidRow(
-            box(
-              title = "Your Tracked Queries",
-              status = "primary",
-              solidHeader = TRUE,
+            column(
               width = 12,
-              uiOutput("queries_summary")
+              div(
+                class = "box",
+                style = "border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 20px;",
+                div(
+                  style = "display: flex; justify-content: space-between; align-items: center; 
+                           margin-bottom: 15px;",
+                  h4(style = "margin: 0; font-weight: 600; color: #2d3748;", "Brand Rankings"),
+                  downloadButton("download_rankings_data", "Export",
+                                 class = "btn-download")
+                ),
+                withSpinner(
+                  DTOutput("dash_rankings_table"),
+                  type = 4, color = "#667eea"
+                )
+              )
             )
           ),
           
-          # Dynamic query panels will be inserted here
-          uiOutput("query_panels")
-        ),
-        
-        # Analytics Tab
-        tabItem(
-          tabName = "analytics",
+          br(),
           
+          # --- Prompt Performance ---
           fluidRow(
-            box(
-              title = "Multi-Metric Spider Chart",
-              status = "primary",
-              solidHeader = TRUE,
-              width = 6,
-              withSpinner(
-                # plotlyOutput("detailed_spider", height = "500px"),
-                h3('multi met spider chart'),
-                type = 4,
-                color = "#667eea"
-              )
-            ),
-            
-            box(
-              title = "Trend Analysis",
-              status = "primary",
-              solidHeader = TRUE,
-              width = 6,
-              withSpinner(
-                # plotlyOutput("trend_chart", height = "500px"),
-                h3('trend line'),
-                type = 4,
-                color = "#667eea"
+            column(
+              width = 12,
+              div(
+                class = "box",
+                style = "border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 20px;",
+                
+                # Header with query selector and download
+                div(
+                  style = "display: flex; justify-content: space-between; align-items: center; 
+                           margin-bottom: 15px; flex-wrap: wrap; gap: 10px;",
+                  h4(style = "margin: 0; font-weight: 600; color: #2d3748;", 
+                     "Prompt Performance"),
+                  div(
+                    style = "display: flex; gap: 10px; align-items: center;",
+                    div(
+                      style = "width: 350px;",
+                      selectInput("dash_query_select", NULL,
+                                  choices = NULL, selected = NULL, width = "100%")
+                    ),
+                    downloadButton("download_prompt_data", "Export",
+                                   class = "btn-download")
+                  )
+                ),
+                
+                # Query table
+                withSpinner(
+                  DTOutput("dash_query_table"),
+                  type = 4, color = "#667eea"
+                ),
+                
+                br(),
+                
+                # Query charts
+                tabsetPanel(
+                  id = "dash_query_chart_tabs",
+                  type = "tabs",
+                  tabPanel("AIRR Score",
+                           withSpinner(plotlyOutput("dash_query_chart_airr", height = "420px"),
+                                       type = 4, color = "#667eea")),
+                  tabPanel("Presence",
+                           withSpinner(plotlyOutput("dash_query_chart_presence", height = "420px"),
+                                       type = 4, color = "#667eea")),
+                  tabPanel("Perception",
+                           withSpinner(plotlyOutput("dash_query_chart_perception", height = "420px"),
+                                       type = 4, color = "#667eea")),
+                  tabPanel("Prestige",
+                           withSpinner(plotlyOutput("dash_query_chart_prestige", height = "420px"),
+                                       type = 4, color = "#667eea")),
+                  tabPanel("Persistence",
+                           withSpinner(plotlyOutput("dash_query_chart_persistence", height = "420px"),
+                                       type = 4, color = "#667eea"))
+                )
               )
             )
           )
         ),
         
-        # Profile Tab
+        # ============================================
+        # ACCOUNT TAB
+        # ============================================
         tabItem(
-          tabName = "profile",
+          tabName = "account",
           
+          # Top row: Profile card + Usage gauges + Upgrade
+          fluidRow(
+            column(
+              width = 3,
+              uiOutput("account_profile_card")
+            ),
+            column(
+              width = 3,
+              uiOutput("account_brand_gauge")
+            ),
+            column(
+              width = 3,
+              uiOutput("account_query_gauge")
+            ),
+            column(
+              width = 3,
+              uiOutput("account_upgrade_card")
+            )
+          ),
+          
+          br(),
+          
+          # Competitor brands + Tracked prompts
           fluidRow(
             box(
-              title = "User Profile",
-              status = "primary",
-              solidHeader = TRUE,
-              width = 6,
-              uiOutput("profile_info")
+              title = NULL, width = 6,
+              div(
+                style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;",
+                h4(style = "margin: 0; font-weight: 600; color: #2d3748;", "Competitor Brands"),
+                uiOutput("account_brand_slot_badge")
+              ),
+              fluidRow(
+                column(8,
+                       textInput("add_competitor_brand_input", NULL,
+                                 placeholder = "Enter a competitor brand name...", width = "100%")),
+                column(4,
+                       tags$div(style = "margin-top: 0px;",
+                                actionButton("add_competitor_btn", "Add", icon = icon("plus"),
+                                             class = "btn-primary", width = "100%")))
+              ),
+              hr(style = "margin: 12px 0; border-color: #f0f0f0;"),
+              uiOutput("account_competitor_list")
             ),
             
             box(
-              title = "Account Statistics",
-              status = "info",
-              solidHeader = TRUE,
-              width = 6,
-              h3('account stats area')
-              # uiOutput("account_stats")
+              title = NULL, width = 6,
+              div(
+                style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;",
+                h4(style = "margin: 0; font-weight: 600; color: #2d3748;", "Tracked Prompts"),
+                uiOutput("account_query_slot_badge")
+              ),
+              fluidRow(
+                column(8,
+                       textInput("add_query_input", NULL,
+                                 placeholder = "Enter a prompt to track...", width = "100%")),
+                column(4,
+                       tags$div(style = "margin-top: 0px;",
+                                actionButton("add_query_btn", "Add", icon = icon("plus"),
+                                             class = "btn-primary", width = "100%")))
+              ),
+              hr(style = "margin: 12px 0; border-color: #f0f0f0;"),
+              uiOutput("account_query_list")
             )
           )
         ),
+        
+        # ============================================
+        # COMPARISONS TAB
+        # ============================================
         tabItem(
           tabName = "comparisons",
           
           fluidRow(
             box(
-              title = "Customer Rankings by AIRR Score",
+              title = "Brand Rankings by AIRR Score",
               status = "primary",
               solidHeader = TRUE,
               width = 12,
@@ -274,16 +347,7 @@ ui <- dashboardPage(
               DTOutput("leaderboard_table")
             )
           ),
-          # fluidRow(
-          #   box(
-          #     title = "AIRR Score Trends Over Time",
-          #     status = "primary",
-          #     solidHeader = TRUE,
-          #     width = 12,
-          #     collapsible = TRUE,
-          #     plotlyOutput("leaderboard_chart", height = "500px")
-          #   )
-          # ),
+          
           fluidRow(
             box(
               title = "Score Trends Over Time",
@@ -294,163 +358,97 @@ ui <- dashboardPage(
               tabsetPanel(
                 id = "leaderboard_chart_tabs",
                 type = "tabs",
-                tabPanel(
-                  "AIRR Score",
-                  value = "airr",
-                  plotlyOutput("leaderboard_chart_airr", height = "500px")
-                ),
-                tabPanel(
-                  "Presence Score",
-                  value = "presence",
-                  plotlyOutput("leaderboard_chart_presence", height = "500px")
-                ),
-                tabPanel(
-                  "Perception Score",
-                  value = "perception",
-                  plotlyOutput("leaderboard_chart_perception", height = "500px")
-                ),
-                tabPanel(
-                  "Prestige Score",
-                  value = "prestige",
-                  plotlyOutput("leaderboard_chart_prestige", height = "500px")
-                ),
-                tabPanel(
-                  "Persistence Score",
-                  value = "persistence",
-                  plotlyOutput("leaderboard_chart_persistence", height = "500px")
-                )
+                tabPanel("AIRR Score",
+                         plotlyOutput("leaderboard_chart_airr", height = "500px")),
+                tabPanel("Presence Score",
+                         plotlyOutput("leaderboard_chart_presence", height = "500px")),
+                tabPanel("Perception Score",
+                         plotlyOutput("leaderboard_chart_perception", height = "500px")),
+                tabPanel("Prestige Score",
+                         plotlyOutput("leaderboard_chart_prestige", height = "500px")),
+                tabPanel("Persistence Score",
+                         plotlyOutput("leaderboard_chart_persistence", height = "500px"))
               )
             )
           ),
+          
           fluidRow(
             box(
-              title = "Select Customers to Compare",
+              title = "Select Brands to Compare",
               status = "primary",
               solidHeader = TRUE,
               width = 12,
               fluidRow(
-                column(4,
-                       selectInput(
-                         "compare_customer_1",
-                         "Customer 1:",
-                         choices = NULL,
-                         selected = NULL
-                       )
-                ),
-                column(4,
-                       selectInput(
-                         "compare_customer_2",
-                         "Customer 2:",
-                         choices = NULL,
-                         selected = NULL
-                       )
-                ),
-                column(4,
-                       selectInput(
-                         "compare_customer_3",
-                         "Customer 3:",
-                         choices = NULL,
-                         selected = NULL
-                       )
-                )
+                column(4, selectInput("compare_customer_1", "Brand 1:",
+                                      choices = NULL, selected = NULL)),
+                column(4, selectInput("compare_customer_2", "Brand 2:",
+                                      choices = NULL, selected = NULL)),
+                column(4, selectInput("compare_customer_3", "Brand 3:",
+                                      choices = NULL, selected = NULL))
               ),
               fluidRow(
-                column(12,
-                       plotlyOutput("spider_chart_compare", height = "600px"))
+                column(12, plotlyOutput("spider_chart_compare", height = "600px"))
               )
             )
           ),
+          
           fluidRow(
             box(
-              title = "Add New Prompt for All Customers",
+              title = "Add New Prompt for All Brands",
               status = "primary",
               solidHeader = TRUE,
               width = 12,
               fluidRow(
                 column(
                   width = 9,
-                  textInput(
-                    "new_prompt_input",
-                    NULL,  # No label since box has title
-                    placeholder = "Enter your prompt here...",
-                    width = "100%"
-                  )
+                  textInput("new_prompt_input", NULL,
+                            placeholder = "Enter your prompt here...",
+                            width = "100%")
                 ),
                 column(
                   width = 3,
-                  # Add margin to align button with input
                   tags$div(
                     style = "margin-top: 0px;",
-                    actionButton(
-                      "submit_prompt_to_all_btn",
-                      "Add Prompt",
-                      icon = icon("plus"),
-                      class = "btn-primary",
-                      width = "100%"
-                    )
+                    actionButton("submit_prompt_to_all_btn", "Add Prompt",
+                                 icon = icon("plus"), class = "btn-primary",
+                                 width = "100%")
                   )
                 )
               ),
               fluidRow(
                 column(
                   width = 9,
-                  selectInput(
-                    "query_select",
-                    "Choose a prompt to analyze:",
-                    choices = NULL,
-                    selected = NULL,
-                    width = "100%"
-                  )
+                  selectInput("query_select", "Choose a prompt to analyze:",
+                              choices = NULL, selected = NULL, width = "100%")
                 )
+              ),
+              fluidRow(
+                column(width = 12, DTOutput("query_top10_table"))
               ),
               fluidRow(
                 column(
                   width = 12,
-                  DTOutput("query_top10_table")
+                  tabsetPanel(
+                    id = "query_chart_tabs",
+                    type = "tabs",
+                    tabPanel("AIRR Score",
+                             plotlyOutput("query_chart_airr", height = "500px")),
+                    tabPanel("Presence Score",
+                             plotlyOutput("query_chart_presence", height = "500px")),
+                    tabPanel("Perception Score",
+                             plotlyOutput("query_chart_perception", height = "500px")),
+                    tabPanel("Prestige Score",
+                             plotlyOutput("query_chart_prestige", height = "500px")),
+                    tabPanel("Persistence Score",
+                             plotlyOutput("query_chart_persistence", height = "500px"))
+                  )
                 )
               )
-              # fluidRow(
-              #   column(
-              #     width = 12,
-              #     tabsetPanel(
-              #       id = "query_chart_tabs",
-              #       type = "tabs",
-              #       tabPanel(
-              #         "AIRR Score",
-              #         value = "airr",
-              #         plotlyOutput("query_chart_airr", height = "500px")
-              #       ),
-              #       tabPanel(
-              #         "Presence Score",
-              #         value = "presence",
-              #         plotlyOutput("query_chart_presence", height = "500px")
-              #       ),
-              #       tabPanel(
-              #         "Perception Score",
-              #         value = "perception",
-              #         plotlyOutput("query_chart_perception", height = "500px")
-              #       ),
-              #       tabPanel(
-              #         "Prestige Score",
-              #         value = "prestige",
-              #         plotlyOutput("query_chart_prestige", height = "500px")
-              #       ),
-              #       tabPanel(
-              #         "Persistence Score",
-              #         value = "persistence",
-              #         plotlyOutput("query_chart_persistence", height = "500px")
-              #       )
-              #     )
-              #   )
-              # )
             )
           )
         )
-      )
-    )
-  )
-)
-
-
-
-
+        
+      ) # end tabItems
+    ) # end conditionalPanel logged_in
+  ) # end dashboardBody
+) # end dashboardPage

@@ -2,20 +2,12 @@
 # AiRR POV - Persistence Measurement
 # Measures temporal stability of visibility
 #
-# Formula: Persistence = 100 × (1 - CoeffVariation)
+# Formula: Persistence = (1 - CoeffVariation) × latest_presence_score
 # Where: CoeffVariation = standard_deviation(scores) / mean(scores)
 
 library(dplyr)
 library(purrr)
 library(tibble)
-
-# Constants ---------------------------------------------------------------
-
-# PERSISTENCE_WEIGHTS <- list(
-#   time_stability = 0.7,
-#   topic_consistency = 0.3
-# )
-
 
 # Helper Functions --------------------------------------------------------
 
@@ -24,7 +16,6 @@ library(tibble)
 #' @return Numeric CV or NULL if insufficient data
 calculate_coefficient_of_variation <- function(values) {
   
-  # Remove NA values
   values <- values[!is.na(values)]
   
   if (length(values) < 2) {
@@ -46,50 +37,47 @@ calculate_coefficient_of_variation <- function(values) {
 
 #' Calculate persistence score from historical presence scores
 #' @param brand_name Character, name of brand
-#' @param historical_presence Numeric vector of historical presence scores
+#' @param historical_presence Data frame with date and overall_score columns
 #' @return List with persistence score and details
 calculate_persistence_score <- function(brand_name,
                                         historical_presence) {
   
   presence_values <- (historical_presence %>%
-    arrange(date))$overall_score
+                        arrange(date))$overall_score
+  
+  # Most recent presence score
+  latest_presence <- tail(presence_values, 1)
   
   daily_delta <- 100 * ((presence_values %>%
-    tail(1)) -
-    (presence_values %>%
-    tail(2) %>%
-    head(1))) /
+                           tail(1)) -
+                          (presence_values %>%
+                             tail(2) %>%
+                             head(1))) /
     (presence_values %>%
        tail(2) %>%
        head(1))
   
-  # Calculate time stability (coefficient of variation)
+  # Calculate coefficient of variation
   cv <- calculate_coefficient_of_variation(presence_values)
   
-  time_stability <- if (!is.null(cv)) {
-    max(0, min(100, 100 * (1 - cv)))
+  # Persistence = (1 - CV) × latest presence score
+  persistence <- if (!is.null(cv)) {
+    max(0, (1 - cv) * latest_presence)
   } else {
-    100
+    latest_presence
   }
   
-  # Calculate overall persistence
-  # persistence <- (
-  #   PERSISTENCE_WEIGHTS$time_stability * time_stability +
-  #     PERSISTENCE_WEIGHTS$topic_consistency * topic_consistency
-  # )
+  # Interpretation (thresholds relative to latest presence)
+  stability_ratio <- if (latest_presence > 0) persistence / latest_presence else 0
   
-  persistence <- time_stability
-  
-  # Interpretation
   interpretation <- case_when(
-    persistence >= 85 ~ "Excellent - Highly stable and consistent presence",
-    persistence >= 70 ~ "Good - Stable presence with minor variations",
-    persistence >= 55 ~ "Fair - Moderate stability",
-    persistence >= 40 ~ "Poor - Significant fluctuations",
+    stability_ratio >= 0.85 ~ "Excellent - Highly stable and consistent presence",
+    stability_ratio >= 0.70 ~ "Good - Stable presence with minor variations",
+    stability_ratio >= 0.55 ~ "Fair - Moderate stability",
+    stability_ratio >= 0.40 ~ "Poor - Significant fluctuations",
     TRUE ~ "Very Poor - Highly unstable presence"
   )
   
-  # Return persistence score
   persistence_out <- list(
     brand_name = brand_name,
     score = round(persistence, 2),
@@ -104,24 +92,29 @@ calculate_persistence_score <- function(brand_name,
 
 
 # Main Interface Function -------------------------------------------------
-#' Calculate prestige score directly from prompt texts
-#' @param brand_name Character, name of brand to score
-#' @return List with score, prompts, responses, and metadata
+
 calculate_daily_persistence <- function(brand_name, run_date) {
   
-  cust_id = dbGetQuery(con, paste0("select customer_id from dim_customer where lower(customer_name) = '",tolower(brand_name),"';"))$customer_id
-  # prestige_scores <- dbGetQuery(con, paste0('select * from fact_prestige_history
-  #                                            where customer_id = ',cust_id,';'))
-  # perception_scores <- dbGetQuery(con, paste0('select * from fact_perception_history
-  #                                            where customer_id = ',cust_id,';'))
-  presence_scores <- dbGetQuery(con, paste0("select * from fact_presence_history
-                                             where customer_id = ", cust_id, "
-                                             and date <= '", run_date, "';"))
+  brand_id = dbGetQuery(con, 
+                        "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1);",
+                        params = list(brand_name))$brand_id
+  
+  presence_scores <- dbGetQuery(con, 
+                                "SELECT * FROM fact_presence_history
+   WHERE brand_id = $1 AND date <= $2;",
+                                params = list(brand_id, run_date))
   
   if(nrow(presence_scores) < 5){
+    # Not enough history — persistence = latest presence score (no penalty)
+    latest <- if (nrow(presence_scores) > 0) {
+      tail((presence_scores %>% arrange(date))$overall_score, 1)
+    } else {
+      0
+    }
+    
     persistence_out <- list(
       brand_name = brand_name,
-      score = 100,
+      score = latest,
       coefficient_of_variation = 0,
       interpretation = "Not enough data",
       daily_perc_change = 0,
@@ -129,7 +122,7 @@ calculate_daily_persistence <- function(brand_name, run_date) {
     )
   } else {
     persistence_out <- calculate_persistence_score(brand_name,
-                                presence_scores)
+                                                   presence_scores)
   }
   
   return(persistence_out)
@@ -137,11 +130,11 @@ calculate_daily_persistence <- function(brand_name, run_date) {
 
 calculate_daily_persistence_sep <- function(presence_history) {
   
-  presence_scores <- presence_history
+  presence_scores <- presence_history %>%
+    rename(overall_score = presence_score)
   
   persistence_out <- calculate_persistence_score('placeholder',
                                                  presence_scores)
   
   return(persistence_out$score)
 }
-

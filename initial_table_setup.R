@@ -8,9 +8,6 @@ CREATE TABLE dim_customer (
     date_added DATE NOT NULL
 );
 ")
-# dbExecute(con, "
-#   alter table dim_customer ADD COLUMN date_added DATE DEFAULT CURRENT_DATE;
-# ")
 
 
 dbExecute(con, "CREATE SEQUENCE IF NOT EXISTS dim_customer_id_seq;")
@@ -183,6 +180,41 @@ CREATE TABLE fact_query_comp_history (
 );
 ")
 
+dbExecute(con, "
+CREATE TABLE dim_subscription (
+    subscription_level_id INTEGER NOT NULL,
+    subscription_name VARCHAR(255) NOT NULL,
+    num_prompts_included INTEGER NOT NULL,
+    num_competitors_included INTEGER NOT NULL,
+    PRIMARY KEY (subscription_level_id)
+);
+")
+
+dbExecute(con, "
+CREATE TABLE fact_customer_level (
+    customer_id INTEGER NOT NULL,
+    subscription_level_id INTEGER NOT NULL,
+    extra_prompts_added INTEGER NOT NULL,
+    date_valid_from DATE NOT NULL,
+    date_valid_to DATE NOT NULL,
+    PRIMARY KEY (customer_id, subscription_level_id, extra_prompts_added, date_valid_from),
+    FOREIGN KEY (customer_id) REFERENCES dim_customer(customer_id) ON DELETE CASCADE
+);
+")
+
+
+dbExecute(con, "
+  INSERT INTO dim_subscription (subscription_level_id, subscription_name, num_prompts_included, num_competitors_included)
+  VALUES 
+    (1, 'Free', 1, 1),
+    (2, 'Pro', 5, 3),
+    (3, 'Enterprise', 20, 10)
+  ON CONFLICT (subscription_level_id) DO NOTHING;
+")
+
+
+
+
 # Create indexes
 dbExecute(con, "CREATE INDEX idx_presence_customer_date ON fact_presence_history(customer_id, date);")
 dbExecute(con, "CREATE INDEX idx_perception_customer_date ON fact_perception_history(customer_id, date);")
@@ -246,24 +278,62 @@ add_customer <- function(con, customer_name) {
 # ")
 
 
-cust_list <- c('Wix', 'Squarespace', 'Webflow', 'Wordpress',
-               'Uber Eats', 'Instacart', 'Doordash', 'Deliveroo',
-               'Ro', 'Hims & Hers', 'Keeps', 'Lemonaid Health',
-               'Bud Light', 'Michelob Ultra', 'Coors Light', 'Miller Light',
-               'Rocket', 'Redfin', 'Zillow', 'Opendoor')
+# cust_list <- c('Wix', 'Squarespace', 'Webflow', 'Wordpress',
+#                'Uber Eats', 'Instacart', 'Doordash', 'Deliveroo',
+#                'Ro', 'Hims & Hers', 'Keeps', 'Lemonaid Health',
+#                'Bud Light', 'Michelob Ultra', 'Coors Light', 'Miller Light',
+#                'Rocket', 'Redfin', 'Zillow', 'Opendoor')
+# 
+# cust_list <- c('Shopify',
+#                'Amazon Fresh', 'Walmart Delivery',
+#                'Roman', 'One Medical','Teladoc Health',
+#                'Corona Extra', 'Miller Lite',
+#                'Zillow','Realtor.com','SoFi')
+# 
+# for (customer_name in cust_list){
+#   customer_id <- create_user(customer_name, paste0(substring(customer_name,1,2),"@",substring(customer_name,1,3),".com"), customer_name)
+#   user_create_airr(customer_name)
+# }
+# 
+# 
 
-cust_list <- c('Shopify',
-               'Amazon Fresh', 'Walmart Delivery',
-               'Roman', 'One Medical','Teladoc Health',
-               'Corona Extra', 'Miller Lite',
-               'Zillow','Realtor.com','SoFi')
+# dbExecute(con,paste0("delete from fact_airr_history
+#                       where date = '2026-02-12';"))
+# dbExecute(con,paste0("delete from fact_presence_history
+#                       where date = '2026-02-12';"))
+# dbExecute(con,paste0("delete from fact_perception_history
+#                       where date = '2026-02-12';"))
+# dbExecute(con,paste0("delete from fact_prestige_history
+#                       where date = '2026-02-12';"))
+# dbExecute(con,paste0("delete from fact_persistence_history
+#                       where date = '2026-02-12';"))
 
-for (customer_name in cust_list){
-  customer_id <- create_user(customer_name, paste0(substring(customer_name,1,2),"@",substring(customer_name,1,3),".com"), customer_name)
-  user_create_airr(customer_name)
-}
 
-
-
+dbExecute(pool,paste0("update fact_presence_history
+                      set date = '2026-02-17' where date = '2026-02-18';"))
+dbExecute(pool,paste0("update fact_perception_history
+                      set date = '2026-02-17' where date = '2026-02-18';"))
+dbExecute(pool,paste0("update fact_prestige_history
+                      set date = '2026-02-17' where date = '2026-02-18';"))
+dbExecute(pool,paste0("update fact_persistence_history
+                      set date = '2026-02-17' where date = '2026-02-18';"))
+dbExecute(pool,paste0("update fact_airr_history
+                      set date = '2026-02-17' where date = '2026-02-18';"))
+dbExecute(pool,paste0("update fact_query_history
+                      set date = '2026-02-17' where date = '2026-02-18';"))
+# 
+# 
+# dim_customer <- dbGetQuery(con,'select * from dim_customer')
+# 
+# # 
+# 
+# fact_airr_history <- dbGetQuery(pool,'select * from fact_airr_history')
+# fact_presence_history <- dbGetQuery(pool,'select * from fact_presence_history')
+# fact_query_history <- dbGetQuery(pool,'select * from fact_query_history')
+# dim_user <- dbGetQuery(pool,'select * from dim_user')
+# dim_brand <- dbGetQuery(pool,'select * from dim_brand')
+# dim_subscription <- dbGetQuery(pool,'select * from dim_subscription')
+# fact_user_sub_level <- dbGetQuery(pool,'select * from fact_user_sub_level')
+# fact_user_queries_tracked <- dbGetQuery(pool,'select * from fact_user_queries_tracked')
 
 

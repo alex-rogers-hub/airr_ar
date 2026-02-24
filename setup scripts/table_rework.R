@@ -257,31 +257,40 @@ View(tracked_prompts)
 #   params = list(<login_id>, <query_id>))
 
 # Or to bulk remove by a vector of query_ids for a specific user:
-# ids_to_remove <- c(97	,
-#                    98	,
-#                    99	,
-#                    100	,
-#                    104	,
-#                    105	,
-#                    106	,
-#                    107	,
-#                    108	,
-#                    109	,
-#                    110	,
-#                    111	,
-#                    112	,
-#                    113	,
-#                    114	,
-#                    115	,
-#                    116	,
-#                    117	,
-#                    118	)
-# for (qid in ids_to_remove) {
-#   dbExecute(con, "
-#     UPDATE fact_user_queries_tracked
-#     SET date_valid_to = CURRENT_DATE
-#     WHERE login_id = $1 AND query_id = $2
-#       AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
-#     params = list(9, qid))
-# }
+ids_to_remove <- c(86	,
+                   87	,
+                   89	,
+                   90	,
+                   91	,
+                   92	,
+                   93	,
+                   94	,
+                   95	,
+                   97	,
+                   98	,
+                   99	,
+                   100	,
+                   104	,
+                   105	,
+                   106	,
+                   107	,
+                   108	,
+                   109	,
+                   110	,
+                   111	,
+                   112	,
+                   113	,
+                   114	,
+                   115	,
+                   116	,
+                   117	,
+                   118	)
+for (qid in ids_to_remove) {
+  dbExecute(con, "
+    UPDATE fact_user_queries_tracked
+    SET date_valid_to = CURRENT_DATE
+    WHERE login_id = $1 AND query_id = $2
+      AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+    params = list(4, qid))
+}
 

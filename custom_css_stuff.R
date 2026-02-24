@@ -879,6 +879,9 @@ table.dataTable tbody tr:last-child td:last-child {
   color: #E74C3C;
 }
 
-
+.leaderboard-row:hover {
+  background: rgba(102, 126, 234, 0.04) !important;
+  cursor: default;
+}
 
 ")

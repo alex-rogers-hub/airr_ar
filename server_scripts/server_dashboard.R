@@ -470,43 +470,183 @@ output$dash_spider_compare <- renderPlotly({
 # Rankings Table (highlighted main brand)
 # ============================================
 
-output$dash_rankings_table <- renderDT({
+# --- Rankings Table (styled leaderboard) ---
+output$dash_rankings_table <- renderUI({
   req(dash_latest_scores())
   
   data <- dash_latest_scores() %>%
-    mutate(
-      brand_name = ifelse(main_brand_flag, paste0("⭐ ", brand_name), brand_name)
-    ) %>%
-    select(Brand = brand_name, `AIRR Score` = airr_score,
-           Presence = presence_score, Perception = perception_score,
-           Prestige = prestige_score, Persistence = persistence_score,
-           Date = date)
+    arrange(desc(airr_score)) %>%
+    mutate(rank = row_number())
   
-  datatable(
-    data,
-    options = list(
-      pageLength = 20,
-      dom = 'tip',
-      ordering = TRUE,
-      scrollX = TRUE,
-      language = list(
-        info = "Showing _START_ to _END_ of _TOTAL_ brands",
-        emptyTable = "No brand data available"
+  if (nrow(data) == 0) {
+    return(div(
+      style = "text-align: center; padding: 40px; color: #a0aec0;",
+      icon("chart-bar", class = "fa-3x", style = "margin-bottom: 15px;"),
+      h4("No brand data yet"),
+      p("Add competitors to see rankings")
+    ))
+  }
+  
+  score_color <- function(val) {
+    if (is.na(val)) return("#cbd5e0")
+    if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+  }
+  
+  rows <- lapply(1:nrow(data), function(i) {
+    row <- data[i, ]
+    is_main <- isTRUE(row$main_brand_flag)
+    
+    rank_style <- if (i == 1) {
+      "background: linear-gradient(135deg, #f6d365, #fda085); color: white;"
+    } else if (i == 2) {
+      "background: linear-gradient(135deg, #c0c0c0, #e0e0e0); color: #555;"
+    } else if (i == 3) {
+      "background: linear-gradient(135deg, #cd7f32, #e6a566); color: white;"
+    } else {
+      "background: #edf2f7; color: #718096;"
+    }
+    
+    row_bg <- if (is_main) {
+      "background: linear-gradient(90deg, rgba(102,126,234,0.08) 0%, rgba(102,126,234,0.03) 100%); 
+       border-left: 4px solid #667eea;"
+    } else {
+      "border-left: 4px solid transparent;"
+    }
+    
+    airr_val <- round(row$airr_score, 1)
+    
+    score_cell <- function(val) {
+      val <- round(val, 1)
+      div(
+        style = paste0(
+          "flex: 0 0 80px; text-align: center; font-size: 13px; font-weight: 600; color: ", 
+          score_color(val), ";"
+        ),
+        val
+      )
+    }
+    
+    div(
+      style = paste0(
+        "display: flex; align-items: center; padding: 12px 16px; ",
+        "border-bottom: 1px solid #f0f0f0; transition: background 0.2s; ",
+        row_bg
       ),
-      rowCallback = JS(
-        "function(row, data) {
-     if (data[0].indexOf('⭐') > -1) {
-       $(row).css('background-color', 'rgba(212, 168, 67, 0.08)');
-       $(row).css('font-weight', '600');
-     }
-   }"
+      class = "leaderboard-row",
+      
+      # Rank
+      div(
+        style = paste0(
+          "flex: 0 0 36px; height: 36px; border-radius: 50%; display: flex; ",
+          "align-items: center; justify-content: center; font-weight: 700; ",
+          "font-size: 14px; margin-right: 16px; ", rank_style
+        ),
+        i
+      ),
+      
+      # Brand name
+      div(
+        style = "flex: 1; text-align: center; padding: 0 20px;",
+        div(
+          style = "display: inline-flex; align-items: center; gap: 8px;",
+          tags$span(
+            style = paste0(
+              "font-weight: ", if (is_main) "700" else "500", "; ",
+              "font-size: 16px; color: #2d3748;"
+            ),
+            row$brand_name
+          ),
+          if (is_main) {
+            tags$span(
+              style = "background: #667eea; color: white; font-size: 9px; padding: 2px 8px; 
+                       border-radius: 10px; font-weight: 600; letter-spacing: 0.5px;",
+              "YOUR BRAND"
+            )
+          }
+        )
+      ),
+      
+      # Separator
+      div(style = "width: 1px; height: 32px; background: #2d3748; opacity: 0.15; margin: 0 8px;"),
+      
+      # AIRR Score
+      div(
+        style = paste0(
+          "flex: 0 0 90px; text-align: center; font-size: 24px; font-weight: 800; color: ", 
+          score_color(airr_val), ";"
+        ),
+        airr_val
+      ),
+      
+      # Separator
+      div(style = "width: 1px; height: 32px; background: #2d3748; opacity: 0.15; margin: 0 8px;"),
+      
+      # 4 P scores
+      score_cell(row$presence_score),
+      score_cell(row$perception_score),
+      score_cell(row$prestige_score),
+      score_cell(row$persistence_score)
+    )
+  })
+  
+  # Container
+  div(
+    style = "border-radius: 10px; overflow: hidden; border: 1px solid #e2e8f0;",
+    
+    # Header
+    div(
+      style = "display: flex; align-items: center; padding: 14px 16px; 
+               background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);",
+      
+      # Rank spacer
+      div(style = "flex: 0 0 36px; margin-right: 16px;"),
+      
+      # Brand
+      div(
+        style = "flex: 1; text-align: center;",
+        tags$span(style = "color: #a0aec0; font-weight: 600; font-size: 11px; 
+                           text-transform: uppercase; letter-spacing: 1.5px;", "Brand")
+      ),
+      
+      # Separator
+      div(style = "width: 1px; height: 20px; background: #4a5568; margin: 0 8px;"),
+      
+      # AIRR
+      div(
+        style = "flex: 0 0 90px; text-align: center;",
+        tags$span(style = "color: #a0aec0; font-weight: 700; font-size: 12px; 
+                   text-transform: uppercase; letter-spacing: 1px;", "AiRR")
+      ),
+      
+      # Separator
+      div(style = "width: 1px; height: 20px; background: #4a5568; margin: 0 8px;"),
+      
+      # 4 P headers
+      div(
+        style = "flex: 0 0 80px; text-align: center;",
+        tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                           text-transform: uppercase; letter-spacing: 0.8px;", "Presence")
+      ),
+      div(
+        style = "flex: 0 0 80px; text-align: center;",
+        tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                           text-transform: uppercase; letter-spacing: 0.8px;", "Perception")
+      ),
+      div(
+        style = "flex: 0 0 80px; text-align: center;",
+        tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                           text-transform: uppercase; letter-spacing: 0.8px;", "Prestige")
+      ),
+      div(
+        style = "flex: 0 0 80px; text-align: center;",
+        tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                           text-transform: uppercase; letter-spacing: 0.8px;", "Persistence")
       )
     ),
-    rownames = FALSE,
-    class = 'cell-border'
-  ) %>%
-    formatRound(c('AIRR Score', 'Presence', 'Perception', 'Prestige', 'Persistence'), 1) %>%
-    formatDate('Date', 'toDateString')
+    
+    # Rows
+    do.call(tagList, rows)
+  )
 })
 
 # ============================================

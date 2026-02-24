@@ -6,7 +6,6 @@ ui <- dashboardPage(
   
   # Header
   dashboardHeader(
-    # title = "AiRR",
     title = tags$a(
       href = "#",
       tags$img(src = "AiRR_logo.jpg", height = "40px", style = "margin-top: -5px;"),
@@ -38,7 +37,8 @@ ui <- dashboardPage(
     useShinyjs(),
     sidebarMenu(
       id = "sidebar",
-      menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard")),
+      menuItem("Brand Overview", tabName = "brand_overview", icon = icon("building")),
+      menuItem("Prompt Overview", tabName = "prompt_overview", icon = icon("comment-dots")),
       menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale")),
       menuItem("Account", tabName = "account", icon = icon("user-cog"))
     )
@@ -109,10 +109,11 @@ ui <- dashboardPage(
       tabItems(
         
         # ============================================
-        # DASHBOARD TAB
+        # BRAND OVERVIEW TAB
         # ============================================
         tabItem(
-          tabName = "dashboard",
+          tabName = "brand_overview",
+          
           # --- Score Cards Row ---
           uiOutput("dash_score_cards_row"),
           br(),
@@ -125,16 +126,25 @@ ui <- dashboardPage(
                 class = "box",
                 style = "border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 20px;",
                 
-                # Header with download
                 div(
                   style = "display: flex; justify-content: space-between; align-items: center; 
                            margin-bottom: 15px;",
                   h4(style = "margin: 0; font-weight: 600; color: #2d3748;", 
                      "Performance Overview"),
-                  downloadButton("download_brand_data", "Export Data",
-                                 class = "btn-download")
+                  div(
+                    style = "display: flex; gap: 10px;",
+                    actionButton(
+                      "add_competitor_from_brand",
+                      "Add Competitor",
+                      icon = icon("plus"),
+                      class = "btn-primary btn-sm",
+                      style = "font-weight: 600;"
+                    ),
+                    downloadButton("download_brand_data", "Export Data",
+                                   class = "btn-download")
+                  )
                 ),
-                # Charts side by side
+                
                 div(
                   class = "chart-row-flex",
                   div(
@@ -191,16 +201,20 @@ ui <- dashboardPage(
                                  class = "btn-download")
                 ),
                 withSpinner(
-                  DTOutput("dash_rankings_table"),
+                  uiOutput("dash_rankings_table"),
                   type = 4, color = "#667eea"
                 )
               )
             )
-          ),
+          )
+        ),
+        
+        # ============================================
+        # PROMPT OVERVIEW TAB
+        # ============================================
+        tabItem(
+          tabName = "prompt_overview",
           
-          br(),
-          
-          # --- Prompt Performance ---
           fluidRow(
             column(
               width = 12,
@@ -208,7 +222,7 @@ ui <- dashboardPage(
                 class = "box",
                 style = "border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 20px;",
                 
-                # Header with query selector and download
+                # Header with query selector, add prompt, and export
                 div(
                   style = "display: flex; justify-content: space-between; align-items: center; 
                            margin-bottom: 15px; flex-wrap: wrap; gap: 10px;",
@@ -220,6 +234,13 @@ ui <- dashboardPage(
                       style = "width: 350px;",
                       selectInput("dash_query_select", NULL,
                                   choices = NULL, selected = NULL, width = "100%")
+                    ),
+                    actionButton(
+                      "add_prompt_from_overview",
+                      "Add Prompt",
+                      icon = icon("plus"),
+                      class = "btn-primary btn-sm",
+                      style = "font-weight: 600;"
                     ),
                     downloadButton("download_prompt_data", "Export",
                                    class = "btn-download")
@@ -265,7 +286,6 @@ ui <- dashboardPage(
         tabItem(
           tabName = "account",
           
-          # Top row: Profile card + Usage gauges + Upgrade
           fluidRow(
             column(
               width = 3,
@@ -287,7 +307,6 @@ ui <- dashboardPage(
           
           br(),
           
-          # Competitor brands + Tracked prompts
           fluidRow(
             box(
               title = NULL, width = 6,

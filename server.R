@@ -24,5 +24,6 @@ server <- function(input, output, session) {
   source("server_scripts/server_compare.R", local = TRUE)
   source("server_scripts/server_profile.R", local = TRUE)
   source("server_scripts/server_account.R", local = TRUE)
+  source("server_scripts/server_modals.R", local = TRUE)
   
 }

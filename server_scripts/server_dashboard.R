@@ -833,3 +833,426 @@ output$download_prompt_data <- downloadHandler(
                 select(-brand_id, -main_brand_flag), file, row.names = FALSE)
   }
 )
+
+# ============================================
+# Prompt Overview — Spider Chart
+# ============================================
+
+output$dash_query_spider <- renderPlotly({
+  req(dash_query_timeseries())
+  
+  data <- dash_query_timeseries()
+  if (nrow(data) == 0) return(NULL)
+  
+  # Get latest per brand
+  latest <- data %>%
+    group_by(brand_name, brand_id, main_brand_flag) %>%
+    filter(date == max(date)) %>%
+    ungroup()
+  
+  p <- plot_ly(type = 'scatterpolar', fill = 'toself')
+  
+  # Competitors first
+  comp_data <- latest %>% filter(main_brand_flag == FALSE)
+  for (i in seq_len(nrow(comp_data))) {
+    p <- p %>% add_trace(
+      r = c(comp_data$presence_score[i], comp_data$perception_score[i],
+            comp_data$prestige_score[i], comp_data$persistence_score[i],
+            comp_data$presence_score[i]),
+      theta = c('Presence', 'Perception', 'Prestige', 'Persistence', 'Presence'),
+      name = comp_data$brand_name[i],
+      line = list(width = 1.5, dash = "dot"),
+      marker = list(size = 5),
+      opacity = 0.5,
+      fillcolor = 'rgba(200, 200, 200, 0.1)',
+      hovertemplate = '<b>%{fullData.name}</b><br>%{theta}: %{r:.1f}<br><extra></extra>'
+    )
+  }
+  
+  # Main brand on top
+  main_data <- latest %>% filter(main_brand_flag == TRUE)
+  if (nrow(main_data) > 0) {
+    p <- p %>% add_trace(
+      r = c(main_data$presence_score[1], main_data$perception_score[1],
+            main_data$prestige_score[1], main_data$persistence_score[1],
+            main_data$presence_score[1]),
+      theta = c('Presence', 'Perception', 'Prestige', 'Persistence', 'Presence'),
+      name = paste0("⭐ ", main_data$brand_name[1]),
+      line = list(width = 4, color = '#667eea'),
+      marker = list(size = 10, color = '#667eea'),
+      fillcolor = 'rgba(102, 126, 234, 0.3)',
+      hovertemplate = paste0('<b>⭐ ', main_data$brand_name[1], '</b><br>%{theta}: %{r:.1f}<br><extra></extra>')
+    )
+  }
+  
+  p %>% layout(
+    polar = list(
+      radialaxis = list(visible = TRUE, range = c(0, 100), showline = TRUE,
+                        showticklabels = TRUE, gridcolor = "#E8EDF2"),
+      angularaxis = list(showline = TRUE, gridcolor = "#E8EDF2")
+    ),
+    showlegend = TRUE,
+    legend = list(orientation = "h", yanchor = "bottom", y = -0.2, xanchor = "center", x = 0.5),
+    plot_bgcolor = "#FFFFFF", paper_bgcolor = "#FFFFFF",
+    margin = list(l = 60, r = 60, t = 20, b = 40)
+  ) %>% config(displayModeBar = FALSE)
+})
+
+# ============================================
+# Prompt Overview — Styled Rankings Table
+# ============================================
+
+output$dash_query_rankings_table <- renderUI({
+  req(dash_query_timeseries())
+  
+  data <- dash_query_timeseries()
+  if (nrow(data) == 0) {
+    return(div(
+      style = "text-align: center; padding: 40px; color: #a0aec0;",
+      icon("comment-dots", class = "fa-3x", style = "margin-bottom: 15px;"),
+      h4("No prompt data yet"),
+      p("Select a prompt above to see rankings")
+    ))
+  }
+  
+  # Latest per brand
+  latest <- data %>%
+    group_by(brand_name, brand_id, main_brand_flag) %>%
+    filter(date == max(date)) %>%
+    ungroup() %>%
+    arrange(desc(airr_score)) %>%
+    mutate(rank = row_number())
+  
+  score_color <- function(val) {
+    if (is.na(val)) return("#cbd5e0")
+    if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+  }
+  
+  rows <- lapply(1:nrow(latest), function(i) {
+    row <- latest[i, ]
+    is_main <- isTRUE(row$main_brand_flag)
+    
+    rank_style <- if (i == 1) {
+      "background: linear-gradient(135deg, #f6d365, #fda085); color: white;"
+    } else if (i == 2) {
+      "background: linear-gradient(135deg, #c0c0c0, #e0e0e0); color: #555;"
+    } else if (i == 3) {
+      "background: linear-gradient(135deg, #cd7f32, #e6a566); color: white;"
+    } else {
+      "background: #edf2f7; color: #718096;"
+    }
+    
+    row_bg <- if (is_main) {
+      "background: linear-gradient(90deg, rgba(102,126,234,0.08) 0%, rgba(102,126,234,0.03) 100%); 
+       border-left: 4px solid #667eea;"
+    } else {
+      "border-left: 4px solid transparent;"
+    }
+    
+    airr_val <- round(row$airr_score, 1)
+    
+    score_cell <- function(val) {
+      val <- round(val, 1)
+      div(
+        style = paste0("flex: 0 0 80px; text-align: center; font-size: 13px; font-weight: 600; color: ",
+                       score_color(val), ";"),
+        val
+      )
+    }
+    
+    div(
+      style = paste0(
+        "display: flex; align-items: center; padding: 12px 16px; ",
+        "border-bottom: 1px solid #f0f0f0; transition: background 0.2s; ", row_bg
+      ),
+      class = "leaderboard-row",
+      
+      div(style = paste0(
+        "flex: 0 0 36px; height: 36px; border-radius: 50%; display: flex; ",
+        "align-items: center; justify-content: center; font-weight: 700; ",
+        "font-size: 14px; margin-right: 16px; ", rank_style), i),
+      
+      div(
+        style = "flex: 1; text-align: center; padding: 0 20px;",
+        div(
+          style = "display: inline-flex; align-items: center; gap: 8px;",
+          tags$span(style = paste0("font-weight: ", if (is_main) "700" else "500",
+                                   "; font-size: 16px; color: #2d3748;"), row$brand_name),
+          if (is_main) tags$span(
+            style = "background: #667eea; color: white; font-size: 9px; padding: 2px 8px; 
+                     border-radius: 10px; font-weight: 600; letter-spacing: 0.5px;", "YOUR BRAND")
+        )
+      ),
+      
+      div(style = "width: 1px; height: 32px; background: #2d3748; opacity: 0.15; margin: 0 8px;"),
+      
+      div(style = paste0("flex: 0 0 90px; text-align: center; font-size: 24px; font-weight: 800; color: ",
+                         score_color(airr_val), ";"), airr_val),
+      
+      div(style = "width: 1px; height: 32px; background: #2d3748; opacity: 0.15; margin: 0 8px;"),
+      
+      score_cell(row$presence_score),
+      score_cell(row$perception_score),
+      score_cell(row$prestige_score),
+      score_cell(row$persistence_score)
+    )
+  })
+  
+  div(
+    style = "border-radius: 10px; overflow: hidden; border: 1px solid #e2e8f0;",
+    
+    div(
+      style = "display: flex; align-items: center; padding: 14px 16px; 
+               background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);",
+      div(style = "flex: 0 0 36px; margin-right: 16px;"),
+      div(style = "flex: 1; text-align: center;",
+          tags$span(style = "color: #a0aec0; font-weight: 600; font-size: 11px; 
+                             text-transform: uppercase; letter-spacing: 1.5px;", "Brand")),
+      div(style = "width: 1px; height: 20px; background: #4a5568; margin: 0 8px;"),
+      div(style = "flex: 0 0 90px; text-align: center;",
+          tags$span(style = "color: #a0aec0; font-weight: 700; font-size: 12px; 
+                             text-transform: uppercase; letter-spacing: 1px;", "AiRR")),
+      div(style = "width: 1px; height: 20px; background: #4a5568; margin: 0 8px;"),
+      div(style = "flex: 0 0 80px; text-align: center;",
+          tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                             text-transform: uppercase; letter-spacing: 0.8px;", "Presence")),
+      div(style = "flex: 0 0 80px; text-align: center;",
+          tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                             text-transform: uppercase; letter-spacing: 0.8px;", "Perception")),
+      div(style = "flex: 0 0 80px; text-align: center;",
+          tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                             text-transform: uppercase; letter-spacing: 0.8px;", "Prestige")),
+      div(style = "flex: 0 0 80px; text-align: center;",
+          tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
+                             text-transform: uppercase; letter-spacing: 0.8px;", "Persistence"))
+    ),
+    
+    do.call(tagList, rows)
+  )
+})
+
+
+
+# ============================================
+# Brand Overview — AI Summary
+# ============================================
+
+# Reactive to cache the brand summary (regenerate on button click)
+brand_ai_summary <- reactiveVal(NULL)
+
+observeEvent(input$generate_brand_summary, {
+  req(dash_latest_scores(), dash_timeseries(), rv$brand_name)
+  
+  # Show loading spinner immediately
+  brand_ai_summary("loading")
+  
+  data_text <- format_brand_data_for_ai(
+    dash_latest_scores(),
+    dash_timeseries(),
+    rv$brand_name
+  )
+  
+  context <- paste0(
+    "This is a brand performance analysis for '", rv$brand_name, 
+    "'. The scores are on a 0-100 scale across four dimensions: ",
+    "Presence (how often AI mentions the brand), ",
+    "Perception (accuracy and sentiment of AI's knowledge), ",
+    "Prestige (competitive ranking and authority), ",
+    "Persistence (consistency of scores over time). ",
+    "The AiRR score is a weighted combination of all four."
+  )
+  
+  # Run in background
+  future_promise({
+    generate_ai_summary(context, data_text)
+  }) %...>% (function(result) {
+    brand_ai_summary(result)
+  }) %...!% (function(err) {
+    brand_ai_summary(paste("Error generating analysis:", err$message))
+  })
+})
+
+output$brand_ai_summary_ui <- renderUI({
+  
+  summary <- brand_ai_summary()
+  
+  if (is.null(summary)) {
+    # Not yet generated or loading
+    return(
+      div(
+        style = "text-align: center; padding: 30px;",
+        actionButton(
+          "generate_brand_summary",
+          div(
+            icon("wand-magic-sparkles", style = "font-size: 20px; margin-bottom: 8px;"),
+            br(),
+            "Generate AI Analysis"
+          ),
+          style = "background: linear-gradient(135deg, #667eea, #764ba2); color: white; 
+                   border: none; border-radius: 12px; padding: 20px 40px; font-size: 14px; 
+                   font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(102,126,234,0.3);
+                   transition: transform 0.2s, box-shadow 0.2s;",
+          class = "ai-generate-btn"
+        )
+      )
+    )
+  }
+  
+  # Check if still loading (future in progress)
+  if (identical(summary, "loading")) {
+    return(
+      div(
+        style = "text-align: center; padding: 40px;",
+        tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 24px; color: #667eea;"),
+        p(style = "color: #a0aec0; margin-top: 12px;", "Generating analysis...")
+      )
+    )
+  }
+  
+  # Display the summary
+  paragraphs <- strsplit(summary, "\n\n|\n")[[1]]
+  paragraphs <- paragraphs[nchar(trimws(paragraphs)) > 0]
+  
+  div(
+    # Header with regenerate button
+    div(
+      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
+      div(
+        style = "display: flex; align-items: center; gap: 8px;",
+        icon("wand-magic-sparkles", style = "color: #667eea; font-size: 16px;"),
+        tags$span(style = "color: #667eea; font-weight: 600; font-size: 13px; 
+                           text-transform: uppercase; letter-spacing: 1px;",
+                  "AI Analysis")
+      ),
+      actionButton(
+        "generate_brand_summary",
+        "Regenerate",
+        icon = icon("rotate"),
+        style = "background: transparent; color: #a0aec0; border: 1px solid #e2e8f0; 
+                 border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 500;"
+      )
+    ),
+    
+    # Analysis text
+    do.call(tagList, lapply(paragraphs, function(p) {
+      tags$p(style = "color: #4a5568; font-size: 14px; line-height: 1.7; margin-bottom: 12px;", p)
+    })),
+    
+    # Timestamp
+    tags$small(
+      style = "color: #cbd5e0; font-size: 11px; font-style: italic;",
+      paste("Generated", format(Sys.time(), "%b %d, %Y at %I:%M %p"))
+    )
+  )
+})
+
+# ============================================
+# Prompt Overview — AI Summary
+# ============================================
+
+prompt_ai_summary <- reactiveVal(NULL)
+
+# Reset when prompt changes
+observeEvent(input$dash_query_select, {
+  prompt_ai_summary(NULL)
+})
+
+observeEvent(input$generate_prompt_summary, {
+  req(dash_query_timeseries(), rv$brand_name, input$dash_query_select)
+  
+  # Show loading spinner immediately
+  prompt_ai_summary("loading")
+  
+  data_text <- format_prompt_data_for_ai(
+    dash_query_timeseries(),
+    rv$brand_name,
+    input$dash_query_select
+  )
+  
+  context <- paste0(
+    "This is a prompt-specific analysis for '", rv$brand_name, 
+    "'. The prompt '", input$dash_query_select, 
+    "' was asked to an AI model multiple times. The scores show how well each brand ",
+    "performs when this specific question is asked. ",
+    "Presence = how often the brand appears in responses. ",
+    "Perception = accuracy and sentiment. ",
+    "Prestige = competitive ranking. ",
+    "Persistence = consistency over time. ",
+    "AiRR = weighted combination."
+  )
+  
+  future_promise({
+    generate_ai_summary(context, data_text)
+  }) %...>% (function(result) {
+    prompt_ai_summary(result)
+  }) %...!% (function(err) {
+    prompt_ai_summary(paste("Error generating analysis:", err$message))
+  })
+})
+
+output$prompt_ai_summary_ui <- renderUI({
+  
+  summary <- prompt_ai_summary()
+  
+  if (is.null(summary)) {
+    return(
+      div(
+        style = "text-align: center; padding: 30px;",
+        actionButton(
+          "generate_prompt_summary",
+          div(
+            icon("wand-magic-sparkles", style = "font-size: 20px; margin-bottom: 8px;"),
+            br(),
+            "Generate AI Analysis"
+          ),
+          style = "background: linear-gradient(135deg, #667eea, #764ba2); color: white; 
+                   border: none; border-radius: 12px; padding: 20px 40px; font-size: 14px; 
+                   font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(102,126,234,0.3);",
+          class = "ai-generate-btn"
+        )
+      )
+    )
+  }
+  
+  if (identical(summary, "loading")) {
+    return(
+      div(
+        style = "text-align: center; padding: 40px;",
+        tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 24px; color: #667eea;"),
+        p(style = "color: #a0aec0; margin-top: 12px;", "Generating analysis...")
+      )
+    )
+  }
+  
+  paragraphs <- strsplit(summary, "\n\n|\n")[[1]]
+  paragraphs <- paragraphs[nchar(trimws(paragraphs)) > 0]
+  
+  div(
+    div(
+      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
+      div(
+        style = "display: flex; align-items: center; gap: 8px;",
+        icon("wand-magic-sparkles", style = "color: #667eea; font-size: 16px;"),
+        tags$span(style = "color: #667eea; font-weight: 600; font-size: 13px; 
+                           text-transform: uppercase; letter-spacing: 1px;",
+                  "AI Analysis")
+      ),
+      actionButton(
+        "generate_prompt_summary",
+        "Regenerate",
+        icon = icon("rotate"),
+        style = "background: transparent; color: #a0aec0; border: 1px solid #e2e8f0; 
+                 border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 500;"
+      )
+    ),
+    
+    do.call(tagList, lapply(paragraphs, function(p) {
+      tags$p(style = "color: #4a5568; font-size: 14px; line-height: 1.7; margin-bottom: 12px;", p)
+    })),
+    
+    tags$small(
+      style = "color: #cbd5e0; font-size: 11px; font-style: italic;",
+      paste("Generated", format(Sys.time(), "%b %d, %Y at %I:%M %p"))
+    )
+  )
+})

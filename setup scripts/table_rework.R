@@ -293,4 +293,15 @@ for (qid in ids_to_remove) {
       AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
     params = list(4, qid))
 }
+dbExecute(pool, "
+INSERT INTO fact_user_queries_tracked (login_id, query_id, date_valid_from, date_valid_to)
+SELECT 10, query_id, date_valid_from, date_valid_to
+FROM fact_user_queries_tracked
+WHERE login_id = 3;")
 
+
+dbExecute(pool, "
+  UPDATE dim_user 
+  SET email = 'ua@ua.com' 
+  WHERE email = 'ue@ue.com';
+")

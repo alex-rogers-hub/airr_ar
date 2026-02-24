@@ -884,4 +884,51 @@ table.dataTable tbody tr:last-child td:last-child {
   cursor: default;
 }
 
+/* Style the selectInput inside the dark prompt strip */
+.prompt-strip-select .selectize-input {
+  background: rgba(255,255,255,0.1) !important;
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  border-radius: 8px !important;
+  color: white !important;
+  font-size: 14px !important;
+  padding: 8px 12px !important;
+  box-shadow: none !important;
+}
+
+.prompt-strip-select .selectize-input.focus {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 2px rgba(102,126,234,0.3) !important;
+}
+
+.prompt-strip-select .selectize-input .item {
+  color: white !important;
+}
+
+.prompt-strip-select .selectize-input input::placeholder {
+  color: #a0aec0 !important;
+}
+
+.prompt-strip-select .selectize-dropdown {
+  background: #2d3748 !important;
+  border: 1px solid #4a5568 !important;
+  border-radius: 8px !important;
+  margin-top: 4px !important;
+}
+
+.prompt-strip-select .selectize-dropdown .option {
+  color: #e2e8f0 !important;
+  padding: 10px 14px !important;
+}
+
+.prompt-strip-select .selectize-dropdown .option:hover,
+.prompt-strip-select .selectize-dropdown .active {
+  background: #667eea !important;
+  color: white !important;
+}
+
+.ai-generate-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4) !important;
+}
+
 ")

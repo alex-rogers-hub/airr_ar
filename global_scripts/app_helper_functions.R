@@ -554,3 +554,146 @@ query_has_scores_for_brands <- function(query_id, brand_ids) {
   return(result$cnt >= length(brand_ids))
 }
 
+#' Generate AI summary analysis of brand/prompt data
+#' @param context Character string describing what to analyze
+#' @param data_summary Character string of the actual data
+#' @param model Character, LLM model name
+#' @return Character string with the analysis
+generate_ai_summary <- function(context, data_summary, model = "gpt-4o-mini") {
+  
+  prompt <- paste0(
+    "You are an expert brand analyst. Analyze the following data and provide a concise, ",
+    "insightful summary in 3-4 short paragraphs. Focus on:\n",
+    "1. Key strengths and weaknesses\n",
+    "2. Notable trends or changes\n",
+    "3. Competitive positioning\n",
+    "4. One actionable recommendation\n\n",
+    "Keep the tone professional but accessible. Use specific numbers from the data. ",
+    "Do not use markdown formatting — write in plain text with line breaks between paragraphs.\n\n",
+    "Context: ", context, "\n\n",
+    "Data:\n", data_summary
+  )
+  
+  result <- tryCatch({
+    resp <- request("https://api.openai.com/v1/chat/completions") |>
+      req_headers(
+        Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+        `Content-Type` = "application/json"
+      ) |>
+      req_body_json(list(
+        model = model,
+        messages = list(
+          list(role = "user", content = prompt)
+        ),
+        temperature = 0.4,
+        max_tokens = 500
+      )) |>
+      req_perform()
+    
+    parsed <- resp_body_json(resp)
+    parsed$choices[[1]]$message$content
+  }, error = function(e) {
+    paste("Unable to generate analysis:", e$message)
+  })
+  
+  return(result)
+}
+
+#' Format brand scores data into a text summary for the AI
+format_brand_data_for_ai <- function(latest_scores, timeseries_data, main_brand_name) {
+  
+  if (is.null(latest_scores) || nrow(latest_scores) == 0) {
+    return("No data available.")
+  }
+  
+  # Current standings
+  standings <- paste(
+    apply(latest_scores, 1, function(row) {
+      main_flag <- if (isTRUE(as.logical(row["main_brand_flag"]))) " (YOUR BRAND)" else ""
+      sprintf("  %s%s: AiRR=%.1f, Presence=%.1f, Perception=%.1f, Prestige=%.1f, Persistence=%.1f",
+              row["brand_name"], main_flag,
+              as.numeric(row["airr_score"]), as.numeric(row["presence_score"]),
+              as.numeric(row["perception_score"]), as.numeric(row["prestige_score"]),
+              as.numeric(row["persistence_score"]))
+    }),
+    collapse = "\n"
+  )
+  
+  # Trend for main brand
+  trend_text <- ""
+  if (!is.null(timeseries_data) && nrow(timeseries_data) > 0) {
+    main_ts <- timeseries_data %>%
+      filter(brand_name == main_brand_name) %>%
+      arrange(date) %>%
+      tail(14)  # Last 14 days
+    
+    if (nrow(main_ts) >= 2) {
+      first <- main_ts$airr_score[1]
+      last <- tail(main_ts$airr_score, 1)
+      change <- last - first
+      direction <- if (change > 0) "up" else if (change < 0) "down" else "flat"
+      trend_text <- sprintf(
+        "\nRecent trend for %s: AiRR score went from %.1f to %.1f (%s %.1f) over the last %d data points.",
+        main_brand_name, first, last, direction, abs(change), nrow(main_ts)
+      )
+    }
+  }
+  
+  # Main brand rank
+  main_rank <- which(latest_scores$brand_name == main_brand_name)
+  rank_text <- if (length(main_rank) > 0) {
+    sprintf("\n%s is ranked #%d out of %d tracked brands.", 
+            main_brand_name, main_rank, nrow(latest_scores))
+  } else {
+    ""
+  }
+  
+  paste0(
+    "Current brand scores (ranked by AiRR):\n", standings,
+    rank_text, trend_text
+  )
+}
+
+#' Format prompt scores data into a text summary for the AI
+format_prompt_data_for_ai <- function(query_data, main_brand_name, prompt_text) {
+  
+  if (is.null(query_data) || nrow(query_data) == 0) {
+    return("No data available for this prompt.")
+  }
+  
+  # Latest per brand
+  latest <- query_data %>%
+    group_by(brand_name, main_brand_flag) %>%
+    filter(date == max(date)) %>%
+    ungroup() %>%
+    arrange(desc(airr_score))
+  
+  standings <- paste(
+    apply(latest, 1, function(row) {
+      main_flag <- if (isTRUE(as.logical(row["main_brand_flag"]))) " (YOUR BRAND)" else ""
+      sprintf("  %s%s: AiRR=%.1f, Presence=%.1f, Perception=%.1f, Prestige=%.1f, Persistence=%.1f",
+              row["brand_name"], main_flag,
+              as.numeric(row["airr_score"]), as.numeric(row["presence_score"]),
+              as.numeric(row["perception_score"]), as.numeric(row["prestige_score"]),
+              as.numeric(row["persistence_score"]))
+    }),
+    collapse = "\n"
+  )
+  
+  # Main brand rank for this prompt
+  main_rank <- which(latest$brand_name == main_brand_name)
+  rank_text <- if (length(main_rank) > 0) {
+    sprintf("\n%s ranks #%d out of %d brands for this prompt.", 
+            main_brand_name, main_rank, nrow(latest))
+  } else {
+    ""
+  }
+  
+  paste0(
+    "Prompt: \"", prompt_text, "\"\n\n",
+    "Brand scores for this prompt:\n", standings,
+    rank_text
+  )
+}
+
+

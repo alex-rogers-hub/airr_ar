@@ -72,8 +72,8 @@ BRAND_THEME <- list(
   gradient_header = "linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%)"
 )
 
-setwd('/home/aarogers/AiRR')
-# setwd('/srv/shiny-server/AiRR')
+# setwd('/home/aarogers/AiRR')
+setwd('/srv/shiny-server/AiRR')
 print(getwd())
 # Color palette
 app_colors <- list(

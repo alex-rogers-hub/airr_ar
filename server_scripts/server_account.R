@@ -182,16 +182,19 @@ output$account_competitor_list <- renderUI({
   }
   
   competitor_cards <- lapply(1:nrow(competitors), function(i) {
-    bid <- competitors$brand_id[i]
-    bname <- competitors$brand_name[i]
+    bid        <- competitors$brand_id[i]
+    bname      <- competitors$brand_name[i]
     date_added <- competitors$date_valid_from[i]
     has_scores <- competitors$has_scores[i]
     
     if (has_scores) {
+      # CHANGED: filter by login_id so we see this user's scores
       latest <- dbGetQuery(pool, "
         SELECT airr_score FROM fact_airr_history 
-        WHERE brand_id = $1 ORDER BY date DESC LIMIT 1",
-                           params = list(bid))
+        WHERE brand_id = $1 AND login_id = $2
+        ORDER BY date DESC LIMIT 1",
+                           params = list(bid, rv$login_id))
+      
       score_text <- if (nrow(latest) > 0) {
         paste0("AiRR: ", round(latest$airr_score, 1))
       } else { "Active" }
@@ -202,14 +205,14 @@ output$account_competitor_list <- renderUI({
         format(date_added, "%b %d, %Y")
       )
       icon_class <- "account-list-icon brand"
-      icon_name <- "building"
+      icon_name  <- "building"
     } else {
       meta_html <- tags$span(
         tags$i(class = "fa fa-spinner fa-spin", style = "margin-right: 4px;"),
         "Calculating scores..."
       )
       icon_class <- "account-list-icon brand pending"
-      icon_name <- "hourglass-half"
+      icon_name  <- "hourglass-half"
     }
     
     div(
@@ -305,14 +308,33 @@ observeEvent(input$add_competitor_btn, {
     return()
   }
   
-  brand_result <- add_brand_for_user_pending(rv$login_id, brand_name, main_brand = FALSE)
+  # NEW: pull the user's industry from their main brand tracking record
+  user_industry <- dbGetQuery(pool, "
+    SELECT ubt.industry
+    FROM fact_user_brands_tracked ubt
+    WHERE ubt.login_id = $1
+      AND ubt.main_brand_flag = TRUE
+      AND ubt.date_valid_from <= CURRENT_DATE
+      AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+    LIMIT 1
+  ", params = list(rv$login_id))
+  
+  industry <- if (nrow(user_industry) > 0 && !is.na(user_industry$industry[1])) {
+    user_industry$industry[1]
+  } else {
+    NULL
+  }
+  
+  # CHANGED: pass industry
+  brand_result <- add_brand_for_user_pending(rv$login_id, brand_name, 
+                                             main_brand = FALSE,
+                                             industry = industry)
   
   if (is.null(brand_result)) {
     showNotification("Error adding brand. Please try again.", type = "error", duration = 3)
     return()
   }
   
-  # Link existing tracked queries to the new brand
   link_existing_queries_to_brand(rv$login_id, brand_result$brand_id)
   
   updateTextInput(session, "add_competitor_brand_input", value = "")
@@ -323,8 +345,8 @@ observeEvent(input$add_competitor_btn, {
                      type = "message", duration = 5)
     
     brand_name_copy <- brand_name
-    brand_id_copy <- brand_result$brand_id
-    login_id_copy <- rv$login_id
+    brand_id_copy   <- brand_result$brand_id
+    login_id_copy   <- rv$login_id
     
     future_promise({
       bg_con <- dbConnect(
@@ -336,10 +358,9 @@ observeEvent(input$add_competitor_btn, {
       assign("con", bg_con, envir = globalenv())
       
       tryCatch({
-        # Calculate main AIRR scores
-        user_create_airr(brand_name_copy)
+        # CHANGED: pass login_id
+        user_create_airr(brand_name_copy, login_id_copy)
         
-        # Calculate query scores for all user's tracked queries
         user_queries <- dbGetQuery(bg_con, "
           SELECT dq.query_id, dq.query_string
           FROM fact_user_queries_tracked uqt
@@ -352,9 +373,11 @@ observeEvent(input$add_competitor_btn, {
         if (nrow(user_queries) > 0) {
           for (q in seq_len(nrow(user_queries))) {
             tryCatch({
-              create_prompt_airr(brand_id_copy, user_queries$query_string[q], user_queries$query_id[q])
+              create_prompt_airr(brand_id_copy, user_queries$query_string[q], 
+                                 user_queries$query_id[q])
             }, error = function(e) {
-              warning(sprintf("Query score failed for query %d: %s", user_queries$query_id[q], e$message))
+              warning(sprintf("Query score failed for query %d: %s", 
+                              user_queries$query_id[q], e$message))
             })
           }
         }

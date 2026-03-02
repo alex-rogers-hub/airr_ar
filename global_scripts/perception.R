@@ -26,28 +26,29 @@ PERCEPTION_WEIGHTS <- list(
 #' @return List with consistency metrics
 measure_consistency_by_type <- function(responses, type, question) {
   
-  # Clean responses
+  # Sanitise all responses first
+  responses <- sanitise_text(responses)
+  
   responses_clean <- responses[!is.na(responses) & nchar(responses) > 0]
   
   if (length(responses_clean) < 2) {
     return(list(
-      score = 0,
+      score        = 0,
       unique_count = length(responses_clean),
-      most_common = NA_character_,
+      most_common  = NA_character_,
       agreement_rate = 0,
-      details = "Insufficient responses"
+      details      = "Insufficient responses"
     ))
   }
   
-  # Apply type-specific measurement
   result <- switch(type,
-                   "year" = measure_year_consistency(responses_clean),
-                   "location" = measure_location_consistency(responses_clean),
-                   "name" = measure_name_consistency(responses_clean),
+                   "year"        = measure_year_consistency(responses_clean),
+                   "location"    = measure_location_consistency(responses_clean),
+                   "name"        = measure_name_consistency(responses_clean),
                    "categorical" = measure_categorical_consistency(responses_clean),
-                   "numeric" = measure_numeric_consistency(responses_clean),
-                   "list" = measure_list_consistency(responses_clean),
-                   "text" = measure_text_consistency(responses_clean)
+                   "numeric"     = measure_numeric_consistency(responses_clean),
+                   "list"        = measure_list_consistency(responses_clean),
+                   "text"        = measure_text_consistency(responses_clean)
   )
   
   return(result)
@@ -472,7 +473,7 @@ SENTIMENT_KEYWORDS_WEIGHTED <- list(
 analyze_sentiment_weighted <- function(response_data,
                                        weighted_keywords = SENTIMENT_KEYWORDS_WEIGHTED) {
   
-  resp_data <- tolower(response_data)
+  resp_data <- sanitise_text(tolower(response_data))
   
   # Initialize results storage
   sentiment_results <- tibble(

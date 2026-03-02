@@ -1,26 +1,32 @@
 # Helper function to fetch brand dashboard data
-get_brand_metrics <- function(brand_id) {
+# CHANGED: added login_id parameter; all queries filter by it
+get_brand_metrics <- function(brand_id, login_id) {
   queryDC <- "SELECT brand_id, brand_name
               FROM dim_brand
               WHERE brand_id = $1"
+  
   queryA <- "SELECT * FROM fact_presence_history
-             WHERE brand_id = $1"
+             WHERE brand_id = $1 AND login_id = $2"
+  
   queryB <- "SELECT * FROM fact_perception_history
-             WHERE brand_id = $1"
+             WHERE brand_id = $1 AND login_id = $2"
+  
   queryC <- "SELECT * FROM fact_prestige_history
-             WHERE brand_id = $1"
+             WHERE brand_id = $1 AND login_id = $2"
+  
   queryD <- "SELECT * FROM fact_persistence_history
-             WHERE brand_id = $1"
+             WHERE brand_id = $1 AND login_id = $2"
+  
   queryE <- "SELECT * FROM fact_airr_history
-             WHERE brand_id = $1"
+             WHERE brand_id = $1 AND login_id = $2"
   
   brand_metrics <- list(
-    brand = dbGetQuery(pool, queryDC, params = list(brand_id)),
-    presence = dbGetQuery(pool, queryA, params = list(brand_id)),
-    perception = dbGetQuery(pool, queryB, params = list(brand_id)),
-    prestige = dbGetQuery(pool, queryC, params = list(brand_id)),
-    persistence = dbGetQuery(pool, queryD, params = list(brand_id)),
-    airr = dbGetQuery(pool, queryE, params = list(brand_id))
+    brand      = dbGetQuery(pool, queryDC, params = list(brand_id)),
+    presence   = dbGetQuery(pool, queryA,  params = list(brand_id, login_id)),
+    perception = dbGetQuery(pool, queryB,  params = list(brand_id, login_id)),
+    prestige   = dbGetQuery(pool, queryC,  params = list(brand_id, login_id)),
+    persistence = dbGetQuery(pool, queryD, params = list(brand_id, login_id)),
+    airr       = dbGetQuery(pool, queryE,  params = list(brand_id, login_id))
   )
   return(brand_metrics)
 }
@@ -215,8 +221,11 @@ get_user_brands <- function(login_id) {
   dbGetQuery(pool, query, params = list(login_id))
 }
 
-add_brand_for_user <- function(login_id, brand_name, main_brand = FALSE) {
-  result <- add_brand_for_user_pending(login_id, brand_name, main_brand)
+# CHANGED: accepts and forwards industry
+add_brand_for_user <- function(login_id, brand_name, 
+                               main_brand = FALSE,
+                               industry = NULL) {
+  result <- add_brand_for_user_pending(login_id, brand_name, main_brand, industry)
   if (!is.null(result)) {
     return(result$brand_id)
   }
@@ -322,11 +331,13 @@ get_user_competitor_brands <- function(login_id) {
 }
 
 #' Add a brand for user and mark as pending (no AIRR calculation yet)
-add_brand_for_user_pending <- function(login_id, brand_name, main_brand = FALSE) {
+# CHANGED: accepts industry parameter and stores it in fact_user_brands_tracked
+add_brand_for_user_pending <- function(login_id, brand_name, 
+                                       main_brand = FALSE,
+                                       industry = NULL) {
   tryCatch({
-    # Check if brand already exists
-    existing <- dbGetQuery(pool, 
-                           "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1)", 
+    existing <- dbGetQuery(pool,
+                           "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1)",
                            params = list(brand_name))
     
     brand_is_new <- (nrow(existing) == 0)
@@ -339,18 +350,20 @@ add_brand_for_user_pending <- function(login_id, brand_name, main_brand = FALSE)
     
     brand_id <- existing$brand_id[1]
     
-    # Link user to brand
+    # Store the user's industry for this brand in the tracking table
     dbExecute(pool, "
-      INSERT INTO fact_user_brands_tracked (login_id, brand_id, main_brand_flag, date_valid_from)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (login_id, brand_id, date_valid_from) DO NOTHING",
-              params = list(login_id, brand_id, main_brand, Sys.Date()))
+      INSERT INTO fact_user_brands_tracked
+        (login_id, brand_id, main_brand_flag, date_valid_from, industry)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (login_id, brand_id, date_valid_from) DO UPDATE
+        SET industry = EXCLUDED.industry",
+              params = list(login_id, brand_id, main_brand, Sys.Date(),
+                            if (is.null(industry) || !nzchar(industry)) NA else industry))
     
-    # Check if brand already has scores
-    has_scores <- brand_has_scores(brand_id)
+    has_scores <- brand_has_scores_for_user(brand_id, login_id)
     
     return(list(
-      brand_id = brand_id,
+      brand_id     = brand_id,
       needs_scoring = !has_scores
     ))
   }, error = function(e) {
@@ -369,12 +382,25 @@ brand_has_scores <- function(brand_id) {
   return(result$cnt > 0)
 }
 
+# NEW: checks scores for a specific (brand_id, login_id) pair
+brand_has_scores_for_user <- function(brand_id, login_id) {
+  result <- dbGetQuery(pool, "
+    SELECT COUNT(*) as cnt
+    FROM fact_airr_history
+    WHERE brand_id = $1 AND login_id = $2",
+                       params = list(brand_id, login_id))
+  return(result$cnt > 0)
+}
+
 #' Get user's competitor brands with score status
+# CHANGED: has_scores now checks (brand_id, login_id) pair
 get_user_competitor_brands_with_status <- function(login_id) {
   query <- "
-    SELECT b.brand_id, b.brand_name, ubt.date_valid_from,
+    SELECT b.brand_id, b.brand_name, ubt.date_valid_from, ubt.industry,
       CASE WHEN EXISTS (
-        SELECT 1 FROM fact_airr_history fa WHERE fa.brand_id = b.brand_id
+        SELECT 1 FROM fact_airr_history fa
+        WHERE fa.brand_id = b.brand_id
+          AND fa.login_id = ubt.login_id     -- per-user check
       ) THEN TRUE ELSE FALSE END as has_scores
     FROM fact_user_brands_tracked ubt
     JOIN dim_brand b ON b.brand_id = ubt.brand_id
@@ -554,146 +580,127 @@ query_has_scores_for_brands <- function(query_id, brand_ids) {
   return(result$cnt >= length(brand_ids))
 }
 
-#' Generate AI summary analysis of brand/prompt data
-#' @param context Character string describing what to analyze
-#' @param data_summary Character string of the actual data
-#' @param model Character, LLM model name
-#' @return Character string with the analysis
-generate_ai_summary <- function(context, data_summary, model = "gpt-4o-mini") {
+#' Build a reach context string for use in prompts
+#' @param reach Character: "global", "national", "regional", or "near_me"
+#' @param country Character or NULL/NA
+#' @param region Character or NULL/NA
+#' @param postcode Character or NULL/NA
+#' @return Character string (empty for global)
+build_reach_context <- function(reach, country = NULL, region = NULL, postcode = NULL) {
+  if (is.null(reach) || is.na(reach)) return("")
   
-  prompt <- paste0(
-    "You are an expert brand analyst. Analyze the following data and provide a concise, ",
-    "insightful summary in 3-4 short paragraphs. Focus on:\n",
-    "1. Key strengths and weaknesses\n",
-    "2. Notable trends or changes\n",
-    "3. Competitive positioning\n",
-    "4. One actionable recommendation\n\n",
-    "Keep the tone professional but accessible. Use specific numbers from the data. ",
-    "Do not use markdown formatting — write in plain text with line breaks between paragraphs.\n\n",
-    "Context: ", context, "\n\n",
-    "Data:\n", data_summary
+  # Clean up NAs
+  if (!is.null(country)  && is.na(country))  country  <- NULL
+  if (!is.null(region)   && is.na(region))   region   <- NULL
+  if (!is.null(postcode) && is.na(postcode)) postcode <- NULL
+  
+  switch(reach,
+         "global"   = "",
+         "national" = if (!is.null(country) && nzchar(country)) country else "",
+         "regional" = if (!is.null(region)  && nzchar(region))  region  else "",
+         "near_me"  = {
+           parts <- c()
+           if (!is.null(postcode) && nzchar(postcode)) parts <- c(parts, postcode)
+           if (!is.null(country)  && nzchar(country))  parts <- c(parts, country)
+           paste(parts, collapse = ", ")
+         },
+         ""
   )
+}
+
+#' Build a "near me" suffix for prompt queries
+#' For near_me brands, replaces generic prompts with location-specific ones
+#' @param reach Character
+#' @param country Character or NULL/NA
+#' @param postcode Character or NULL/NA
+#' @return Character string like "near 10001, United States" or ""
+build_near_me_suffix <- function(reach, country = NULL, postcode = NULL) {
+  if (is.null(reach) || is.na(reach) || reach != "near_me") return("")
   
-  result <- tryCatch({
-    resp <- request("https://api.openai.com/v1/chat/completions") |>
-      req_headers(
-        Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
-        `Content-Type` = "application/json"
-      ) |>
-      req_body_json(list(
-        model = model,
-        messages = list(
-          list(role = "user", content = prompt)
-        ),
-        temperature = 0.4,
-        max_tokens = 500
-      )) |>
-      req_perform()
+  if (!is.null(country)  && is.na(country))  country  <- NULL
+  if (!is.null(postcode) && is.na(postcode)) postcode <- NULL
+  
+  parts <- c()
+  if (!is.null(postcode) && nzchar(postcode)) parts <- c(parts, postcode)
+  if (!is.null(country)  && nzchar(country))  parts <- c(parts, country)
+  
+  if (length(parts) > 0) {
+    return(paste0(" near ", paste(parts, collapse = ", ")))
+  }
+  return("")
+}
+
+#' Deduplicate fact_user_brands_tracked
+#' Keeps the oldest date_valid_from per login_id + brand_id combination
+dedupe_user_brands_tracked <- function(login_id) {
+  tryCatch({
+    dbExecute(pool, "
+      DELETE FROM fact_user_brands_tracked a
+      USING fact_user_brands_tracked b
+      WHERE a.login_id = b.login_id
+        AND a.brand_id = b.brand_id
+        AND a.date_valid_from > b.date_valid_from
+        AND a.login_id = $1;
+    ", params = list(login_id))
     
-    parsed <- resp_body_json(resp)
-    parsed$choices[[1]]$message$content
+    message(sprintf("✓ Deduped fact_user_brands_tracked for login_id %d", login_id))
+    return(TRUE)
   }, error = function(e) {
-    paste("Unable to generate analysis:", e$message)
+    warning(paste("Error deduping user brands:", e$message))
+    return(FALSE)
   })
-  
-  return(result)
 }
 
-#' Format brand scores data into a text summary for the AI
-format_brand_data_for_ai <- function(latest_scores, timeseries_data, main_brand_name) {
+#' Sanitise text from LLM responses
+#' Converts to UTF-8, replaces problematic Unicode chars, removes non-printable chars
+#' @param text Character vector
+#' @return Cleaned character vector
+sanitise_text <- function(text) {
+  if (is.null(text)) return(text)
   
-  if (is.null(latest_scores) || nrow(latest_scores) == 0) {
-    return("No data available.")
-  }
+  text <- as.character(text)
+  text <- enc2utf8(text)
   
-  # Current standings
-  standings <- paste(
-    apply(latest_scores, 1, function(row) {
-      main_flag <- if (isTRUE(as.logical(row["main_brand_flag"]))) " (YOUR BRAND)" else ""
-      sprintf("  %s%s: AiRR=%.1f, Presence=%.1f, Perception=%.1f, Prestige=%.1f, Persistence=%.1f",
-              row["brand_name"], main_flag,
-              as.numeric(row["airr_score"]), as.numeric(row["presence_score"]),
-              as.numeric(row["perception_score"]), as.numeric(row["prestige_score"]),
-              as.numeric(row["persistence_score"]))
-    }),
-    collapse = "\n"
+  replacements <- c(
+    "\u00e4" = "a",  "\u00f6" = "o",  "\u00fc" = "u",
+    "\u00c4" = "A",  "\u00d6" = "O",  "\u00dc" = "U",
+    "\u00df" = "ss", "\u00e9" = "e",  "\u00e8" = "e",
+    "\u00ea" = "e",  "\u00eb" = "e",  "\u00c9" = "E",
+    "\u00c8" = "E",  "\u00ca" = "E",  "\u00cb" = "E",
+    "\u00e0" = "a",  "\u00e1" = "a",  "\u00e2" = "a",
+    "\u00e3" = "a",  "\u00c0" = "A",  "\u00c1" = "A",
+    "\u00c2" = "A",  "\u00c3" = "A",  "\u00ec" = "i",
+    "\u00ed" = "i",  "\u00ee" = "i",  "\u00ef" = "i",
+    "\u00cc" = "I",  "\u00cd" = "I",  "\u00ce" = "I",
+    "\u00cf" = "I",  "\u00f2" = "o",  "\u00f3" = "o",
+    "\u00f4" = "o",  "\u00f5" = "o",  "\u00d2" = "O",
+    "\u00d3" = "O",  "\u00d4" = "O",  "\u00d5" = "O",
+    "\u00f9" = "u",  "\u00fa" = "u",  "\u00fb" = "u",
+    "\u00d9" = "U",  "\u00da" = "U",  "\u00db" = "U",
+    "\u00f1" = "n",  "\u00d1" = "N",  "\u00e7" = "c",
+    "\u00c7" = "C",  "\u00fd" = "y",  "\u00ff" = "y",
+    "\u0160" = "S",  "\u0161" = "s",  "\u017d" = "Z",
+    "\u017e" = "z",  "\u010c" = "C",  "\u010d" = "c",
+    "\u0159" = "r",  "\u0158" = "R",  "\u0142" = "l",
+    "\u0141" = "L",  "\u00f8" = "o",  "\u00d8" = "O",
+    "\u00e5" = "a",  "\u00c5" = "A",  "\u00e6" = "ae",
+    "\u00c6" = "AE", "\u2019" = "'",  "\u2018" = "'",
+    "\u201c" = '"',  "\u201d" = '"',  "\u2013" = "-",
+    "\u2014" = "-",  "\u2026" = "...","\u00a0" = " ",
+    "\u200b" = "",   "\u200c" = "",   "\u200d" = "",
+    "\ufeff" = ""
   )
   
-  # Trend for main brand
-  trend_text <- ""
-  if (!is.null(timeseries_data) && nrow(timeseries_data) > 0) {
-    main_ts <- timeseries_data %>%
-      filter(brand_name == main_brand_name) %>%
-      arrange(date) %>%
-      tail(14)  # Last 14 days
-    
-    if (nrow(main_ts) >= 2) {
-      first <- main_ts$airr_score[1]
-      last <- tail(main_ts$airr_score, 1)
-      change <- last - first
-      direction <- if (change > 0) "up" else if (change < 0) "down" else "flat"
-      trend_text <- sprintf(
-        "\nRecent trend for %s: AiRR score went from %.1f to %.1f (%s %.1f) over the last %d data points.",
-        main_brand_name, first, last, direction, abs(change), nrow(main_ts)
-      )
-    }
+  for (from in names(replacements)) {
+    text <- gsub(from, replacements[[from]], text, fixed = TRUE)
   }
   
-  # Main brand rank
-  main_rank <- which(latest_scores$brand_name == main_brand_name)
-  rank_text <- if (length(main_rank) > 0) {
-    sprintf("\n%s is ranked #%d out of %d tracked brands.", 
-            main_brand_name, main_rank, nrow(latest_scores))
-  } else {
-    ""
-  }
+  # Remove any remaining non-ASCII
+  text <- gsub("[^\x20-\x7E\n\r\t]", "", text)
   
-  paste0(
-    "Current brand scores (ranked by AiRR):\n", standings,
-    rank_text, trend_text
-  )
+  # Clean up multiple spaces
+  text <- gsub("\\s+", " ", text)
+  text <- trimws(text)
+  
+  return(text)
 }
-
-#' Format prompt scores data into a text summary for the AI
-format_prompt_data_for_ai <- function(query_data, main_brand_name, prompt_text) {
-  
-  if (is.null(query_data) || nrow(query_data) == 0) {
-    return("No data available for this prompt.")
-  }
-  
-  # Latest per brand
-  latest <- query_data %>%
-    group_by(brand_name, main_brand_flag) %>%
-    filter(date == max(date)) %>%
-    ungroup() %>%
-    arrange(desc(airr_score))
-  
-  standings <- paste(
-    apply(latest, 1, function(row) {
-      main_flag <- if (isTRUE(as.logical(row["main_brand_flag"]))) " (YOUR BRAND)" else ""
-      sprintf("  %s%s: AiRR=%.1f, Presence=%.1f, Perception=%.1f, Prestige=%.1f, Persistence=%.1f",
-              row["brand_name"], main_flag,
-              as.numeric(row["airr_score"]), as.numeric(row["presence_score"]),
-              as.numeric(row["perception_score"]), as.numeric(row["prestige_score"]),
-              as.numeric(row["persistence_score"]))
-    }),
-    collapse = "\n"
-  )
-  
-  # Main brand rank for this prompt
-  main_rank <- which(latest$brand_name == main_brand_name)
-  rank_text <- if (length(main_rank) > 0) {
-    sprintf("\n%s ranks #%d out of %d brands for this prompt.", 
-            main_brand_name, main_rank, nrow(latest))
-  } else {
-    ""
-  }
-  
-  paste0(
-    "Prompt: \"", prompt_text, "\"\n\n",
-    "Brand scores for this prompt:\n", standings,
-    rank_text
-  )
-}
-
-

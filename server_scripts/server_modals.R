@@ -69,21 +69,18 @@ observeEvent(input$modal_add_competitor_btn, {
     return()
   }
   
-  # Check main brand
   main <- user_main_brand()
   if (nrow(main) > 0 && tolower(brand_name) == tolower(main$brand_name)) {
     showNotification("This is already your main brand!", type = "warning", duration = 3)
     return()
   }
   
-  # Check existing
   existing <- user_competitors()
   if (nrow(existing) > 0 && tolower(brand_name) %in% tolower(existing$brand_name)) {
     showNotification("You're already tracking this brand.", type = "warning", duration = 3)
     return()
   }
   
-  # Check slots
   sub <- user_subscription()
   used <- user_competitor_count()
   max_competitors <- sub$num_competitors_included + sub$extra_competitors_added
@@ -93,8 +90,27 @@ observeEvent(input$modal_add_competitor_btn, {
     return()
   }
   
-  # Add brand
-  brand_result <- add_brand_for_user_pending(rv$login_id, brand_name, main_brand = FALSE)
+  # NEW: pull user's industry from their main brand tracking record
+  user_industry <- dbGetQuery(pool, "
+    SELECT ubt.industry
+    FROM fact_user_brands_tracked ubt
+    WHERE ubt.login_id = $1
+      AND ubt.main_brand_flag = TRUE
+      AND ubt.date_valid_from <= CURRENT_DATE
+      AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+    LIMIT 1
+  ", params = list(rv$login_id))
+  
+  industry <- if (nrow(user_industry) > 0 && !is.na(user_industry$industry[1])) {
+    user_industry$industry[1]
+  } else {
+    NULL
+  }
+  
+  # CHANGED: pass industry
+  brand_result <- add_brand_for_user_pending(rv$login_id, brand_name, 
+                                             main_brand = FALSE,
+                                             industry = industry)
   
   if (is.null(brand_result)) {
     showNotification("Error adding brand.", type = "error", duration = 3)
@@ -111,6 +127,7 @@ observeEvent(input$modal_add_competitor_btn, {
     )
     
     brand_name_copy <- brand_name
+    login_id_copy   <- rv$login_id
     
     future_promise({
       bg_con <- dbConnect(
@@ -125,7 +142,8 @@ observeEvent(input$modal_add_competitor_btn, {
       assign("con", bg_con, envir = globalenv())
       
       tryCatch({
-        user_create_airr(brand_name_copy)
+        # CHANGED: pass login_id
+        user_create_airr(brand_name_copy, login_id_copy)
         list(success = TRUE, brand = brand_name_copy)
       }, error = function(e) {
         list(success = FALSE, brand = brand_name_copy, error = e$message)

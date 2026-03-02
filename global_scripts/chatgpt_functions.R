@@ -20,7 +20,7 @@ ask_chatgpt <- function(
     ),
     response_parser = function(resp) {
       parsed <- resp |> resp_body_json()
-      parsed$choices[[1]]$message$content
+      sanitise_text(parsed$choices[[1]]$message$content)
     }
   )
 }
@@ -62,7 +62,7 @@ query_chatgpt_multiple <- function(text, repetitions) {
 
 ask_chatgpt_async <- function(
     prompts,
-    model = "gpt-4o-mini",
+    model = "gpt-4.1-mini",
     temperature = 0.7,
     max_concurrent = 450,
     max_retries = 3,
@@ -207,7 +207,7 @@ ask_chatgpt_async <- function(
         return(NA_character_)
       }
       parsed <- resp_body_json(resp)
-      parsed$choices[[1]]$message$content
+      sanitise_text(parsed$choices[[1]]$message$content)
     })
     
     all_results <- c(all_results, batch_results)
@@ -270,7 +270,7 @@ ask_chatgpt_async <- function(
         resp <- retry_responses[[j]]
         if (!resp_is_error(resp)) {
           parsed <- resp_body_json(resp)
-          all_results[[failed_indices[j]]] <- parsed$choices[[1]]$message$content
+          all_results[[failed_indices[j]]] <- sanitise_text(parsed$choices[[1]]$message$content)
           message(sprintf("  ✓ Retry %d succeeded", failed_indices[j]))
         } else {
           message(sprintf("  ✗ Retry %d failed", failed_indices[j]))

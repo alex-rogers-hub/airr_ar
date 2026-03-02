@@ -34,156 +34,108 @@ output$auth_alert <- renderUI({
 
 # Login handler
 observeEvent(input$login_btn, {
-  email <- trimws(input$login_email)
+  email    <- trimws(input$login_email)
   password <- input$login_password
   
   if (email == "" || password == "") {
     rv$auth_message <- "Please enter both email and password"
-    rv$auth_type <- "danger"
+    rv$auth_type    <- "danger"
     return()
   }
   
   if (email == "demo@airr.com" && password == "Demo") {
-    rv$logged_in <- TRUE
-    rv$login_id <- 0
-    rv$email <- "demo@airr.com"
-    rv$brand_id <- 0
-    rv$brand_name <- "Demo"
-    rv$auth_message <- NULL
-    
+    rv$login_id             <- 0        # SET login_id FIRST
+    rv$email                <- "demo@airr.com"
+    rv$brand_id             <- 0
+    rv$brand_name           <- "Demo"
+    rv$auth_message         <- NULL
+    rv$onboarding_complete  <- TRUE
+    rv$logged_in            <- TRUE     # SET logged_in LAST
     showNotification("Login successful!", type = "message", duration = 3)
-  } else {
-    user <- verify_user(email, password)
+    return()
+  }
+  
+  user <- verify_user(email, password)
+  
+  if (!is.null(user)) {
     
-    if (!is.null(user)) {
-      rv$logged_in <- TRUE
-      rv$login_id <- user$login_id
-      rv$email <- user$email
-      rv$auth_message <- NULL
-      
-      # Get the user's main brand
+    # Check onboarding status first, before setting logged_in
+    ob_check <- dbGetQuery(pool,
+                           "SELECT onboarding_complete FROM dim_user WHERE login_id = $1",
+                           params = list(user$login_id))
+    
+    onboarding_done <- isTRUE(ob_check$onboarding_complete[1])
+    
+    # Load brand if onboarding done
+    brand_id_val   <- NULL
+    brand_name_val <- NULL
+    
+    if (onboarding_done) {
       user_brands <- get_user_brands(user$login_id)
-      main_brand <- user_brands %>% filter(main_brand_flag == TRUE)
+      main_brand  <- user_brands %>% filter(main_brand_flag == TRUE)
       
       if (nrow(main_brand) > 0) {
-        rv$brand_id <- main_brand$brand_id[1]
-        rv$brand_name <- main_brand$brand_name[1]
+        brand_id_val   <- main_brand$brand_id[1]
+        brand_name_val <- main_brand$brand_name[1]
       } else if (nrow(user_brands) > 0) {
-        rv$brand_id <- user_brands$brand_id[1]
-        rv$brand_name <- user_brands$brand_name[1]
+        brand_id_val   <- user_brands$brand_id[1]
+        brand_name_val <- user_brands$brand_name[1]
       }
-      
-      showNotification("Login successful!", type = "message", duration = 3)
-    } else {
-      rv$auth_message <- "Invalid email or password"
-      rv$auth_type <- "danger"
     }
+    
+    # Now set ALL reactive values together, login_id before logged_in
+    rv$login_id            <- user$login_id
+    rv$email               <- user$email
+    rv$auth_message        <- NULL
+    rv$onboarding_complete <- onboarding_done
+    rv$brand_id            <- brand_id_val
+    rv$brand_name          <- brand_name_val
+    rv$logged_in           <- TRUE      # SET logged_in LAST so reactives have all values
+    
+    showNotification("Login successful!", type = "message", duration = 3)
+    
+  } else {
+    rv$auth_message <- "Invalid email or password"
+    rv$auth_type    <- "danger"
   }
 })
 
-# Register handler
+# Register handler — remove brand_name field, onboarding handles that now
 observeEvent(input$register_btn, {
-  brand_name <- trimws(input$register_brand_name)
-  email <- trimws(input$register_email)
-  password <- input$register_password
+  email            <- trimws(input$register_email)
+  password         <- input$register_password
   password_confirm <- input$register_password_confirm
   
-  if (brand_name == "" || email == "" || password == "" || password_confirm == "") {
+  if (email == "" || password == "" || password_confirm == "") {
     rv$auth_message <- "Please fill in all fields"
-    rv$auth_type <- "danger"
+    rv$auth_type    <- "danger"
     return()
   }
   
   if (password != password_confirm) {
     rv$auth_message <- "Passwords do not match"
-    rv$auth_type <- "danger"
+    rv$auth_type    <- "danger"
     return()
   }
   
   if (!grepl("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}$", email)) {
     rv$auth_message <- "Please enter a valid email address"
-    rv$auth_type <- "danger"
+    rv$auth_type    <- "danger"
     return()
   }
   
-  # Create user account
   login_id <- create_user(email, password)
   
   if (!is.null(login_id)) {
-    # Create/link brand — checks if it already exists and has scores
-    brand_result <- add_brand_for_user_pending(login_id, brand_name, main_brand = TRUE)
-    
-    if (!is.null(brand_result)) {
-      rv$logged_in <- TRUE
-      rv$login_id <- login_id
-      rv$email <- email
-      rv$brand_id <- brand_result$brand_id
-      rv$brand_name <- brand_name
-      rv$auth_message <- NULL
-      
-      if (brand_result$needs_scoring) {
-        # Brand is new — calculate scores
-        showNotification(
-          "Account created! Calculating your brand scores — this may take a minute...",
-          type = "message", duration = 5
-        )
-        
-        # Run scoring in background
-        brand_name_copy <- brand_name
-        
-        future_promise({
-          bg_con <- dbConnect(
-            RPostgres::Postgres(),
-            dbname = Sys.getenv("DB_NAME"),
-            host = Sys.getenv("DB_HOST"),
-            port = Sys.getenv("DB_PORT"),
-            user = Sys.getenv("DB_USER"),
-            password = Sys.getenv("DB_PASSWORD")
-          )
-          on.exit(dbDisconnect(bg_con))
-          assign("con", bg_con, envir = globalenv())
-          
-          tryCatch({
-            user_create_airr(brand_name_copy)
-            list(success = TRUE, brand = brand_name_copy)
-          }, error = function(e) {
-            list(success = FALSE, brand = brand_name_copy, error = e$message)
-          })
-        }) %...>% (function(result) {
-          if (result$success) {
-            showNotification(
-              paste0("✓ Scores ready for ", result$brand, "!"),
-              type = "message", duration = 5
-            )
-          } else {
-            showNotification(
-              paste0("⚠ Score calculation failed for ", result$brand, ": ", result$error),
-              type = "warning", duration = 10
-            )
-          }
-          rv$brands_refresh <- rv$brands_refresh + 1
-        }) %...!% (function(err) {
-          showNotification(
-            paste0("⚠ Background error: ", err$message),
-            type = "error", duration = 10
-          )
-          rv$brands_refresh <- rv$brands_refresh + 1
-        })
-        
-      } else {
-        # Brand already has scores — instant
-        showNotification(
-          "Account created! Your brand already has scores on file.",
-          type = "message", duration = 3
-        )
-      }
-    } else {
-      rv$auth_message <- "Error setting up brand. Please try again."
-      rv$auth_type <- "danger"
-    }
+    # SET login_id before logged_in
+    rv$login_id            <- login_id
+    rv$email               <- email
+    rv$auth_message        <- NULL
+    rv$onboarding_complete <- FALSE
+    rv$logged_in           <- TRUE     # LAST
   } else {
     rv$auth_message <- "Email already exists"
-    rv$auth_type <- "danger"
+    rv$auth_type    <- "danger"
   }
 })
 
@@ -210,3 +162,6 @@ output$user_info <- renderUI({
     )
   }
 })
+
+output$onboarding_complete <- reactive({ rv$onboarding_complete })
+outputOptions(output, "onboarding_complete", suspendWhenHidden = FALSE)

@@ -21,6 +21,10 @@ library(pool)
 library(shinycssloaders)
 library(future)
 library(promises)
+library(rmarkdown)
+library(knitr)
+library(base64enc)
+library(later)
 
 # ============================================
 # Brand Theme (change these to update all colours)
@@ -72,8 +76,8 @@ BRAND_THEME <- list(
   gradient_header = "linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%)"
 )
 
-# setwd('/home/aarogers/AiRR')
-setwd('/srv/shiny-server/AiRR')
+setwd('/home/aarogers/AiRR')
+# setwd('/srv/shiny-server/AiRR')
 print(getwd())
 # Color palette
 app_colors <- list(
@@ -184,6 +188,8 @@ source("global_scripts/persistence.R")
 source("global_scripts/full_airr_score.R")
 source("global_scripts/upload_functions.R")
 source("global_scripts/app_helper_functions.R")
+source("global_scripts/report_generator.R")
+source("global_scripts/profile_scoring.R")
 
 # running the below runs by default in "gpt-4o-mini". Add "gpt-4o" or other model name to change this
 # daily_refresh_loop()

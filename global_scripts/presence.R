@@ -85,33 +85,34 @@ detect_brand_with_position <- function(text, brand_name) {
   if (is.na(text) || nchar(text) == 0) {
     return(list(
       brand_mentioned = FALSE,
-      first_position = NA_integer_,
-      mention_count = 0,
-      all_positions = integer(0)
+      first_position  = NA_integer_,
+      mention_count   = 0,
+      all_positions   = integer(0)
     ))
   }
   
-  text_lower <- tolower(text)
+  text_lower    <- tolower(sanitise_text(text))
   all_positions <- integer(0)
   
-  # Find all matches for all patterns
   for (pattern in brand_name) {
-    matches <- str_locate_all(text_lower, regex(tolower(pattern), ignore_case = TRUE))[[1]]
+    matches <- str_locate_all(
+      text_lower,
+      regex(tolower(sanitise_text(pattern)), ignore_case = TRUE)
+    )[[1]]
     
     if (nrow(matches) > 0) {
       all_positions <- c(all_positions, matches[, "start"])
     }
   }
   
-  # Remove duplicates and sort
   all_positions <- unique(all_positions)
   all_positions <- sort(all_positions)
   
   list(
     brand_mentioned = length(all_positions) > 0,
-    first_position = if (length(all_positions) > 0) all_positions[1] else NA_integer_,
-    mention_count = length(all_positions),
-    all_positions = all_positions
+    first_position  = if (length(all_positions) > 0) all_positions[1] else NA_integer_,
+    mention_count   = length(all_positions),
+    all_positions   = all_positions
   )
 }
 
@@ -247,6 +248,9 @@ presence_prompt_calc <- function(brand_name,
   
 
   responses <- presence_responses
+  
+  # Sanitise all response text
+  responses$responses <- sanitise_text(responses$responses)
   
   # Initialize results storage
   presence_results <- tibble(

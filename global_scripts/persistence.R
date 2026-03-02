@@ -93,19 +93,21 @@ calculate_persistence_score <- function(brand_name,
 
 # Main Interface Function -------------------------------------------------
 
-calculate_daily_persistence <- function(brand_name, run_date) {
+# CHANGED: added login_id parameter; queries filter by it
+calculate_daily_persistence <- function(brand_name, login_id, run_date) {
   
-  brand_id = dbGetQuery(con, 
-                        "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1);",
-                        params = list(brand_name))$brand_id
+  brand_id <- dbGetQuery(con,
+                         "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1);",
+                         params = list(brand_name))$brand_id
   
-  presence_scores <- dbGetQuery(con, 
+  presence_scores <- dbGetQuery(con,
                                 "SELECT * FROM fact_presence_history
-   WHERE brand_id = $1 AND date <= $2;",
-                                params = list(brand_id, run_date))
+     WHERE brand_id = $1
+       AND login_id = $2
+       AND date <= $3;",
+                                params = list(brand_id, login_id, run_date))
   
-  if(nrow(presence_scores) < 5){
-    # Not enough history — persistence = latest presence score (no penalty)
+  if (nrow(presence_scores) < 5) {
     latest <- if (nrow(presence_scores) > 0) {
       tail((presence_scores %>% arrange(date))$overall_score, 1)
     } else {
@@ -113,16 +115,15 @@ calculate_daily_persistence <- function(brand_name, run_date) {
     }
     
     persistence_out <- list(
-      brand_name = brand_name,
-      score = latest,
+      brand_name               = brand_name,
+      score                    = latest,
       coefficient_of_variation = 0,
-      interpretation = "Not enough data",
-      daily_perc_change = 0,
-      timestamp = Sys.time()
+      interpretation           = "Not enough data",
+      daily_perc_change        = 0,
+      timestamp                = Sys.time()
     )
   } else {
-    persistence_out <- calculate_persistence_score(brand_name,
-                                                   presence_scores)
+    persistence_out <- calculate_persistence_score(brand_name, presence_scores)
   }
   
   return(persistence_out)

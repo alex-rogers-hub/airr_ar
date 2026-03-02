@@ -2,6 +2,14 @@
 # Dashboard - User's brands with main highlighted
 # ============================================
 
+observe({
+  cat("=== STATE ===\n")
+  cat("logged_in:", rv$logged_in, "\n")
+  cat("login_id:", rv$login_id, "\n")
+  cat("brand_id:", rv$brand_id, "\n")
+  cat("onboarding_complete:", rv$onboarding_complete, "\n")
+})
+
 # --- Reactive: Get all user's brand IDs (main + competitors) ---
 user_all_brand_ids <- reactive({
   req(rv$logged_in, rv$login_id)
@@ -19,69 +27,102 @@ user_all_brand_ids <- reactive({
   dbGetQuery(pool, query, params = list(rv$login_id))
 })
 
+# Auto-refresh dashboard while scores are being calculated
+observe({
+  req(rv$logged_in, rv$login_id)
+  
+  brands <- tryCatch(user_all_brand_ids(), error = function(e) NULL)
+  scores <- tryCatch(dash_latest_scores(), error = function(e) NULL)
+  
+  if (!is.null(brands) && nrow(brands) > 0) {
+    brands_with_scores <- if (!is.null(scores)) nrow(scores) else 0
+    
+    # If not all brands have scores yet, keep polling
+    if (brands_with_scores < nrow(brands)) {
+      invalidateLater(8000, session)
+      rv$brands_refresh <- isolate(rv$brands_refresh) + 1
+    }
+  }
+})
+
 # --- Reactive: Latest scores for all user's brands ---
 dash_latest_scores <- reactive({
   req(user_all_brand_ids())
   
-  brands <- user_all_brand_ids()
+  brands    <- user_all_brand_ids()
+  login_id  <- rv$login_id          # NEW
   if (nrow(brands) == 0) return(NULL)
   
-  brand_ids <- brands$brand_id
-  placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+  brand_ids    <- brands$brand_id
+  n            <- length(brand_ids)
+  # $1 = login_id, $2..$n+1 = brand_ids
+  placeholders <- paste0("$", 2:(n + 1), collapse = ", ")
   
   query <- sprintf("
     WITH latest_dates AS (
       SELECT brand_id, MAX(date) as latest_date
       FROM fact_airr_history
-      WHERE brand_id IN (%s) AND airr_score IS NOT NULL
+      WHERE login_id = $1                        -- NEW
+        AND brand_id IN (%s)
+        AND airr_score IS NOT NULL
       GROUP BY brand_id
     )
     SELECT 
-      db.brand_name,
-      db.brand_id,
+      db.brand_name, db.brand_id,
       fa.airr_score,
-      fpres.overall_score as presence_score,
+      fpres.overall_score  as presence_score,
       fperc.perception_score,
       fprest.prestige_score,
       fpers.persistence_score,
       fa.date
     FROM dim_brand db
     INNER JOIN latest_dates ld ON db.brand_id = ld.brand_id
-    INNER JOIN fact_airr_history fa ON db.brand_id = fa.brand_id AND fa.date = ld.latest_date
-    LEFT JOIN fact_presence_history fpres ON db.brand_id = fpres.brand_id AND fpres.date = ld.latest_date
-    LEFT JOIN fact_perception_history fperc ON db.brand_id = fperc.brand_id AND fperc.date = ld.latest_date
-    LEFT JOIN fact_prestige_history fprest ON db.brand_id = fprest.brand_id AND fprest.date = ld.latest_date
-    LEFT JOIN fact_persistence_history fpers ON db.brand_id = fpers.brand_id AND fpers.date = ld.latest_date
+    INNER JOIN fact_airr_history fa
+      ON db.brand_id = fa.brand_id AND fa.date = ld.latest_date
+      AND fa.login_id = $1                       -- NEW
+    LEFT JOIN fact_presence_history fpres
+      ON db.brand_id = fpres.brand_id AND fpres.date = ld.latest_date
+      AND fpres.login_id = $1                    -- NEW
+    LEFT JOIN fact_perception_history fperc
+      ON db.brand_id = fperc.brand_id AND fperc.date = ld.latest_date
+      AND fperc.login_id = $1                    -- NEW
+    LEFT JOIN fact_prestige_history fprest
+      ON db.brand_id = fprest.brand_id AND fprest.date = ld.latest_date
+      AND fprest.login_id = $1                   -- NEW
+    LEFT JOIN fact_persistence_history fpers
+      ON db.brand_id = fpers.brand_id AND fpers.date = ld.latest_date
+      AND fpers.login_id = $1                    -- NEW
     ORDER BY fa.airr_score DESC
   ", placeholders)
   
-  result <- dbGetQuery(pool, query, params = as.list(brand_ids))
-  
-  result <- result %>%
-    left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
-  
-  result
+  # params: login_id first, then brand_ids
+  result <- dbGetQuery(pool, query, params = as.list(c(login_id, brand_ids)))
+  result %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
 })
 
 # --- Reactive: Timeseries for all user's brands ---
 dash_timeseries <- reactive({
   req(user_all_brand_ids())
   
-  brands <- user_all_brand_ids()
+  brands    <- user_all_brand_ids()
+  login_id  <- rv$login_id          # NEW
   if (nrow(brands) == 0) return(NULL)
   
-  brand_ids <- brands$brand_id
-  placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+  brand_ids    <- brands$brand_id
+  placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
   query <- sprintf("
     SELECT db.brand_name, db.brand_id, fa.date, fa.airr_score
     FROM dim_brand db
-    LEFT JOIN fact_airr_history fa ON db.brand_id = fa.brand_id
-    WHERE db.brand_id IN (%s) AND fa.airr_score IS NOT NULL
+    LEFT JOIN fact_airr_history fa
+      ON db.brand_id = fa.brand_id
+      AND fa.login_id = $1                       -- NEW
+    WHERE db.brand_id IN (%s)
+      AND fa.airr_score IS NOT NULL
     ORDER BY db.brand_name, fa.date
   ", placeholders)
   
-  result <- dbGetQuery(pool, query, params = as.list(brand_ids))
+  result <- dbGetQuery(pool, query, params = as.list(c(login_id, brand_ids)))
   result %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
 })
 
@@ -92,6 +133,73 @@ dash_timeseries <- reactive({
 output$dash_score_cards_row <- renderUI({
   
   scores <- tryCatch(dash_latest_scores(), error = function(e) NULL)
+  
+  # Check if we have brands but no scores yet (background still running)
+  brands <- tryCatch(user_all_brand_ids(), error = function(e) NULL)
+  has_brands_no_scores <- !is.null(brands) && nrow(brands) > 0 && 
+    (is.null(scores) || nrow(scores) == 0)
+  
+  if (has_brands_no_scores) {
+    # Show placeholder "calculating" cards
+    return(
+      fluidRow(
+        column(
+          width = 4,
+          div(
+            class = "score-card-main",
+            div(class = "score-label", "AiRR Score"),
+            div(
+              style = "margin: 15px 0;",
+              tags$i(class = "fa fa-spinner fa-spin", 
+                     style = "font-size: 32px; color: #D4A843;")
+            ),
+            div(style = "font-size: 12px; opacity: 0.8;", "Calculating...")
+          )
+        ),
+        column(
+          width = 4,
+          div(
+            class = "score-card-grid",
+            div(class = "score-card-mini presence",
+                div(class = "score-label", "Presence"),
+                div(class = "score-value", 
+                    tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 18px;"))),
+            div(class = "score-card-mini perception",
+                div(class = "score-label", "Perception"),
+                div(class = "score-value", 
+                    tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 18px;"))),
+            div(class = "score-card-mini prestige",
+                div(class = "score-label", "Prestige"),
+                div(class = "score-value", 
+                    tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 18px;"))),
+            div(class = "score-card-mini persistence",
+                div(class = "score-label", "Persistence"),
+                div(class = "score-value", 
+                    tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 18px;")))
+          )
+        ),
+        column(
+          width = 4,
+          div(
+            style = "background: white; border-radius: 16px; padding: 25px; height: 100%;
+                     min-height: 200px; box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+                     display: flex; flex-direction: column; justify-content: center;
+                     text-align: center;",
+            tags$i(class = "fa fa-spinner fa-spin", 
+                   style = "font-size: 24px; color: #667eea; margin-bottom: 12px;"),
+            div(style = "font-size: 14px; font-weight: 600; color: #4a5568;",
+                "Setting up your dashboard"),
+            div(style = "font-size: 12px; color: #a0aec0; margin-top: 6px;",
+                paste0(nrow(brands), " brand", 
+                       if (nrow(brands) != 1) "s" else "",
+                       " being scored...")),
+            div(style = "font-size: 11px; color: #cbd5e0; margin-top: 8px;",
+                "Scores will appear automatically when ready")
+          )
+        )
+      )
+    )
+  }
   
   if (is.null(scores) || nrow(scores) == 0) {
     return(
@@ -110,20 +218,18 @@ output$dash_score_cards_row <- renderUI({
     )
   }
   
+  # --- Normal score cards (existing code) ---
   main_scores <- scores %>% filter(main_brand_flag == TRUE)
   comps <- scores %>% filter(main_brand_flag == FALSE)
   
-  # AIRR score
   airr_val <- if (nrow(main_scores) > 0) round(main_scores$airr_score[1], 1) else "—"
   airr_date <- if (nrow(main_scores) > 0) format(main_scores$date[1], "%b %d") else ""
   
-  # 4 P scores
   presence_val <- if (nrow(main_scores) > 0) round(main_scores$presence_score[1], 1) else "—"
   perception_val <- if (nrow(main_scores) > 0) round(main_scores$perception_score[1], 1) else "—"
   prestige_val <- if (nrow(main_scores) > 0) round(main_scores$prestige_score[1], 1) else "—"
   persistence_val <- if (nrow(main_scores) > 0) round(main_scores$persistence_score[1], 1) else "—"
   
-  # Rank
   main_rank <- if (nrow(main_scores) > 0) {
     which(scores$brand_name == main_scores$brand_name[1])
   } else {
@@ -131,7 +237,6 @@ output$dash_score_cards_row <- renderUI({
   }
   
   fluidRow(
-    # AIRR Score card
     column(
       width = 4,
       div(
@@ -142,8 +247,6 @@ output$dash_score_cards_row <- renderUI({
             if (airr_date != "") paste("as of", airr_date) else "")
       )
     ),
-    
-    # 4 P's grid
     column(
       width = 4,
       div(
@@ -162,8 +265,6 @@ output$dash_score_cards_row <- renderUI({
             div(class = "score-value", persistence_val))
       )
     ),
-    
-    # Position summary
     column(
       width = 4,
       div(
@@ -254,14 +355,12 @@ create_dash_chart <- function(data, score_col, y_title, main_brand_name) {
   main_data <- data %>% filter(main_brand_flag == TRUE)
   comp_data <- data %>% filter(main_brand_flag == FALSE)
   
-  # Colour palette for competitors
   comp_colours <- c("#E74C3C", "#3498DB", "#2ECC71", "#9B59B6", 
                     "#E67E22", "#1ABC9C", "#34495E", "#F39C12",
                     "#16A085", "#C0392B")
   
   p <- plot_ly()
   
-  # Competitors with distinct colours
   if (nrow(comp_data) > 0) {
     comp_brands <- unique(comp_data$brand_name)
     for (idx in seq_along(comp_brands)) {
@@ -281,7 +380,6 @@ create_dash_chart <- function(data, score_col, y_title, main_brand_name) {
     }
   }
   
-  # Main brand on top
   if (nrow(main_data) > 0) {
     p <- p %>% add_trace(
       data = main_data, x = ~date, y = as.formula(paste0("~", score_col)),
@@ -308,17 +406,20 @@ output$dash_chart_airr <- renderPlotly({
 
 output$dash_chart_presence <- renderPlotly({
   req(user_all_brand_ids())
-  brands <- user_all_brand_ids()
+  brands    <- user_all_brand_ids()
+  login_id  <- rv$login_id                           # NEW
   brand_ids <- brands$brand_id
-  placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+  placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
   data <- dbGetQuery(pool, sprintf("
     SELECT db.brand_name, db.brand_id, fph.date, fph.overall_score as presence_score
     FROM dim_brand db
-    LEFT JOIN fact_presence_history fph ON db.brand_id = fph.brand_id
+    LEFT JOIN fact_presence_history fph
+      ON db.brand_id = fph.brand_id
+      AND fph.login_id = $1                          -- NEW
     WHERE db.brand_id IN (%s) AND fph.overall_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
-  ", placeholders), params = as.list(brand_ids))
+  ", placeholders), params = as.list(c(login_id, brand_ids)))
   
   data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
   create_dash_chart(data, "presence_score", "Presence Score", rv$brand_name)
@@ -326,17 +427,20 @@ output$dash_chart_presence <- renderPlotly({
 
 output$dash_chart_perception <- renderPlotly({
   req(user_all_brand_ids())
-  brands <- user_all_brand_ids()
+  brands    <- user_all_brand_ids()
+  login_id  <- rv$login_id                           # NEW
   brand_ids <- brands$brand_id
-  placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+  placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
   data <- dbGetQuery(pool, sprintf("
     SELECT db.brand_name, db.brand_id, fph.date, fph.perception_score
     FROM dim_brand db
-    LEFT JOIN fact_perception_history fph ON db.brand_id = fph.brand_id
+    LEFT JOIN fact_perception_history fph
+      ON db.brand_id = fph.brand_id
+      AND fph.login_id = $1                          -- NEW
     WHERE db.brand_id IN (%s) AND fph.perception_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
-  ", placeholders), params = as.list(brand_ids))
+  ", placeholders), params = as.list(c(login_id, brand_ids)))
   
   data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
   create_dash_chart(data, "perception_score", "Perception Score", rv$brand_name)
@@ -344,17 +448,20 @@ output$dash_chart_perception <- renderPlotly({
 
 output$dash_chart_prestige <- renderPlotly({
   req(user_all_brand_ids())
-  brands <- user_all_brand_ids()
+  brands    <- user_all_brand_ids()
+  login_id  <- rv$login_id                           # NEW
   brand_ids <- brands$brand_id
-  placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+  placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
   data <- dbGetQuery(pool, sprintf("
     SELECT db.brand_name, db.brand_id, fph.date, fph.prestige_score
     FROM dim_brand db
-    LEFT JOIN fact_prestige_history fph ON db.brand_id = fph.brand_id
+    LEFT JOIN fact_prestige_history fph
+      ON db.brand_id = fph.brand_id
+      AND fph.login_id = $1                          -- NEW
     WHERE db.brand_id IN (%s) AND fph.prestige_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
-  ", placeholders), params = as.list(brand_ids))
+  ", placeholders), params = as.list(c(login_id, brand_ids)))
   
   data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
   create_dash_chart(data, "prestige_score", "Prestige Score", rv$brand_name)
@@ -362,17 +469,20 @@ output$dash_chart_prestige <- renderPlotly({
 
 output$dash_chart_persistence <- renderPlotly({
   req(user_all_brand_ids())
-  brands <- user_all_brand_ids()
+  brands    <- user_all_brand_ids()
+  login_id  <- rv$login_id                           # NEW
   brand_ids <- brands$brand_id
-  placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+  placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
   data <- dbGetQuery(pool, sprintf("
     SELECT db.brand_name, db.brand_id, fph.date, fph.persistence_score
     FROM dim_brand db
-    LEFT JOIN fact_persistence_history fph ON db.brand_id = fph.brand_id
+    LEFT JOIN fact_persistence_history fph
+      ON db.brand_id = fph.brand_id
+      AND fph.login_id = $1                          -- NEW
     WHERE db.brand_id IN (%s) AND fph.persistence_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
-  ", placeholders), params = as.list(brand_ids))
+  ", placeholders), params = as.list(c(login_id, brand_ids)))
   
   data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
   create_dash_chart(data, "persistence_score", "Persistence Score", rv$brand_name)
@@ -394,7 +504,6 @@ output$dash_spider_compare <- renderPlotly({
   
   p <- plot_ly(type = 'scatterpolar')
   
-  # Competitors with distinct colours and hover
   comp_data <- data %>% filter(main_brand_flag == FALSE)
   for (i in seq_len(nrow(comp_data))) {
     col <- comp_colours[((i - 1) %% length(comp_colours)) + 1]
@@ -416,7 +525,6 @@ output$dash_spider_compare <- renderPlotly({
     )
   }
   
-  # Main brand on top
   main_data <- data %>% filter(main_brand_flag == TRUE)
   if (nrow(main_data) > 0) {
     p <- p %>% add_trace(
@@ -470,7 +578,6 @@ output$dash_spider_compare <- renderPlotly({
 # Rankings Table (highlighted main brand)
 # ============================================
 
-# --- Rankings Table (styled leaderboard) ---
 output$dash_rankings_table <- renderUI({
   req(dash_latest_scores())
   
@@ -534,7 +641,6 @@ output$dash_rankings_table <- renderUI({
       ),
       class = "leaderboard-row",
       
-      # Rank
       div(
         style = paste0(
           "flex: 0 0 36px; height: 36px; border-radius: 50%; display: flex; ",
@@ -544,7 +650,6 @@ output$dash_rankings_table <- renderUI({
         i
       ),
       
-      # Brand name
       div(
         style = "flex: 1; text-align: center; padding: 0 20px;",
         div(
@@ -566,10 +671,8 @@ output$dash_rankings_table <- renderUI({
         )
       ),
       
-      # Separator
       div(style = "width: 1px; height: 32px; background: #2d3748; opacity: 0.15; margin: 0 8px;"),
       
-      # AIRR Score
       div(
         style = paste0(
           "flex: 0 0 90px; text-align: center; font-size: 24px; font-weight: 800; color: ", 
@@ -578,10 +681,8 @@ output$dash_rankings_table <- renderUI({
         airr_val
       ),
       
-      # Separator
       div(style = "width: 1px; height: 32px; background: #2d3748; opacity: 0.15; margin: 0 8px;"),
       
-      # 4 P scores
       score_cell(row$presence_score),
       score_cell(row$perception_score),
       score_cell(row$prestige_score),
@@ -589,39 +690,31 @@ output$dash_rankings_table <- renderUI({
     )
   })
   
-  # Container
   div(
     style = "border-radius: 10px; overflow: hidden; border: 1px solid #e2e8f0;",
     
-    # Header
     div(
       style = "display: flex; align-items: center; padding: 14px 16px; 
                background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);",
       
-      # Rank spacer
       div(style = "flex: 0 0 36px; margin-right: 16px;"),
       
-      # Brand
       div(
         style = "flex: 1; text-align: center;",
         tags$span(style = "color: #a0aec0; font-weight: 600; font-size: 11px; 
                            text-transform: uppercase; letter-spacing: 1.5px;", "Brand")
       ),
       
-      # Separator
       div(style = "width: 1px; height: 20px; background: #4a5568; margin: 0 8px;"),
       
-      # AIRR
       div(
         style = "flex: 0 0 90px; text-align: center;",
         tags$span(style = "color: #a0aec0; font-weight: 700; font-size: 12px; 
                    text-transform: uppercase; letter-spacing: 1px;", "AiRR")
       ),
       
-      # Separator
       div(style = "width: 1px; height: 20px; background: #4a5568; margin: 0 8px;"),
       
-      # 4 P headers
       div(
         style = "flex: 0 0 80px; text-align: center;",
         tags$span(style = "color: #a0aec0; font-weight: 500; font-size: 10px; 
@@ -644,7 +737,6 @@ output$dash_rankings_table <- renderUI({
       )
     ),
     
-    # Rows
     do.call(tagList, rows)
   )
 })
@@ -667,7 +759,6 @@ observe({
   
   query_choices <- setNames(queries$query_string, queries$query_string)
   
-  # Select first query by default
   updateSelectInput(session, "dash_query_select",
                     choices = query_choices,
                     selected = query_choices[1])
@@ -782,31 +873,38 @@ output$dash_query_chart_persistence <- renderPlotly({
 # ============================================
 
 output$download_brand_data <- downloadHandler(
-  filename = function() {
-    paste0("airr_brand_data_", Sys.Date(), ".csv")
-  },
+  filename = function() paste0("airr_brand_data_", Sys.Date(), ".csv"),
   content = function(file) {
     req(user_all_brand_ids())
-    
-    brands <- user_all_brand_ids()
+    brands    <- user_all_brand_ids()
+    login_id  <- rv$login_id                         # NEW
     brand_ids <- brands$brand_id
-    placeholders <- paste0("$", seq_along(brand_ids), collapse = ", ")
+    placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
     
     data <- dbGetQuery(pool, sprintf("
       SELECT db.brand_name, fa.date, fa.airr_score,
-             fpres.overall_score as presence_score,
+             fpres.overall_score  as presence_score,
              fperc.perception_score,
              fprest.prestige_score,
              fpers.persistence_score
       FROM dim_brand db
-      LEFT JOIN fact_airr_history fa ON db.brand_id = fa.brand_id
-      LEFT JOIN fact_presence_history fpres ON db.brand_id = fpres.brand_id AND fpres.date = fa.date
-      LEFT JOIN fact_perception_history fperc ON db.brand_id = fperc.brand_id AND fperc.date = fa.date
-      LEFT JOIN fact_prestige_history fprest ON db.brand_id = fprest.brand_id AND fprest.date = fa.date
-      LEFT JOIN fact_persistence_history fpers ON db.brand_id = fpers.brand_id AND fpers.date = fa.date
+      LEFT JOIN fact_airr_history fa
+        ON db.brand_id = fa.brand_id AND fa.login_id = $1         -- NEW
+      LEFT JOIN fact_presence_history fpres
+        ON db.brand_id = fpres.brand_id AND fpres.date = fa.date
+        AND fpres.login_id = $1                                    -- NEW
+      LEFT JOIN fact_perception_history fperc
+        ON db.brand_id = fperc.brand_id AND fperc.date = fa.date
+        AND fperc.login_id = $1                                    -- NEW
+      LEFT JOIN fact_prestige_history fprest
+        ON db.brand_id = fprest.brand_id AND fprest.date = fa.date
+        AND fprest.login_id = $1                                   -- NEW
+      LEFT JOIN fact_persistence_history fpers
+        ON db.brand_id = fpers.brand_id AND fpers.date = fa.date
+        AND fpers.login_id = $1                                    -- NEW
       WHERE db.brand_id IN (%s)
       ORDER BY db.brand_name, fa.date
-    ", placeholders), params = as.list(brand_ids))
+    ", placeholders), params = as.list(c(login_id, brand_ids)))
     
     write.csv(data, file, row.names = FALSE)
   }
@@ -844,7 +942,6 @@ output$dash_query_spider <- renderPlotly({
   data <- dash_query_timeseries()
   if (nrow(data) == 0) return(NULL)
   
-  # Get latest per brand
   latest <- data %>%
     group_by(brand_name, brand_id, main_brand_flag) %>%
     filter(date == max(date)) %>%
@@ -852,7 +949,6 @@ output$dash_query_spider <- renderPlotly({
   
   p <- plot_ly(type = 'scatterpolar', fill = 'toself')
   
-  # Competitors first
   comp_data <- latest %>% filter(main_brand_flag == FALSE)
   for (i in seq_len(nrow(comp_data))) {
     p <- p %>% add_trace(
@@ -869,7 +965,6 @@ output$dash_query_spider <- renderPlotly({
     )
   }
   
-  # Main brand on top
   main_data <- latest %>% filter(main_brand_flag == TRUE)
   if (nrow(main_data) > 0) {
     p <- p %>% add_trace(
@@ -915,7 +1010,6 @@ output$dash_query_rankings_table <- renderUI({
     ))
   }
   
-  # Latest per brand
   latest <- data %>%
     group_by(brand_name, brand_id, main_brand_flag) %>%
     filter(date == max(date)) %>%
@@ -1031,228 +1125,419 @@ output$dash_query_rankings_table <- renderUI({
   )
 })
 
-
-
 # ============================================
-# Brand Overview — AI Summary
+# Navigate to profiles tab from brand/prompt overview
 # ============================================
 
-# Reactive to cache the brand summary (regenerate on button click)
-brand_ai_summary <- reactiveVal(NULL)
-
-observeEvent(input$generate_brand_summary, {
-  req(dash_latest_scores(), dash_timeseries(), rv$brand_name)
-  
-  # Show loading spinner immediately
-  brand_ai_summary("loading")
-  
-  data_text <- format_brand_data_for_ai(
-    dash_latest_scores(),
-    dash_timeseries(),
-    rv$brand_name
-  )
-  
-  context <- paste0(
-    "This is a brand performance analysis for '", rv$brand_name, 
-    "'. The scores are on a 0-100 scale across four dimensions: ",
-    "Presence (how often AI mentions the brand), ",
-    "Perception (accuracy and sentiment of AI's knowledge), ",
-    "Prestige (competitive ranking and authority), ",
-    "Persistence (consistency of scores over time). ",
-    "The AiRR score is a weighted combination of all four."
-  )
-  
-  # Run in background
-  future_promise({
-    generate_ai_summary(context, data_text)
-  }) %...>% (function(result) {
-    brand_ai_summary(result)
-  }) %...!% (function(err) {
-    brand_ai_summary(paste("Error generating analysis:", err$message))
-  })
+observeEvent(input$manage_profiles_from_brand, {
+  updateTabItems(session, "sidebar", "profiles")
 })
 
-output$brand_ai_summary_ui <- renderUI({
+observeEvent(input$manage_profiles_from_prompt, {
+  updateTabItems(session, "sidebar", "profiles")
+})
+
+# ============================================
+# Compact rankings helper function
+# Used by both brand and prompt overview
+# ============================================
+
+render_compact_rankings <- function(data) {
   
-  summary <- brand_ai_summary()
+  if (nrow(data) == 0) {
+    return(div(
+      style = "text-align: center; padding: 30px; color: #a0aec0;",
+      icon("chart-bar", class = "fa-2x", style = "margin-bottom: 10px;"),
+      p("No data yet")
+    ))
+  }
   
-  if (is.null(summary)) {
-    # Not yet generated or loading
+  score_color <- function(val) {
+    if (is.na(val) || is.null(val)) return("#cbd5e0")
+    if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+  }
+  
+  score_cell <- function(val, col) {
+    div(
+      style = paste0(
+        "flex: 0 0 38px; text-align: center; font-size: 12px; ",
+        "font-weight: 700; color: ", col, ";"
+      ),
+      round(val, 0)
+    )
+  }
+  
+  rows <- lapply(1:nrow(data), function(i) {
+    row      <- data[i, ]
+    is_main  <- isTRUE(row$main_brand_flag)
+    airr_val <- round(row$airr_score, 1)
+    
+    rank_style <- if (i == 1) {
+      "background: linear-gradient(135deg, #f6d365, #fda085); color: white;"
+    } else if (i == 2) {
+      "background: linear-gradient(135deg, #c0c0c0, #e0e0e0); color: #555;"
+    } else if (i == 3) {
+      "background: linear-gradient(135deg, #cd7f32, #e6a566); color: white;"
+    } else {
+      "background: #edf2f7; color: #718096;"
+    }
+    
+    row_bg <- if (is_main) {
+      "background: linear-gradient(90deg, rgba(102,126,234,0.08) 0%, 
+       rgba(102,126,234,0.03) 100%); border-left: 3px solid #667eea;"
+    } else {
+      "border-left: 3px solid transparent;"
+    }
+    
+    div(
+      style = paste0(
+        "display: flex; align-items: center; padding: 7px 10px; ",
+        "border-bottom: 1px solid #f0f0f0; gap: 6px; ", row_bg
+      ),
+      
+      # Rank badge
+      div(
+        style = paste0(
+          "flex: 0 0 22px; height: 22px; border-radius: 50%; display: flex; ",
+          "align-items: center; justify-content: center; font-weight: 700; ",
+          "font-size: 10px; flex-shrink: 0; ", rank_style
+        ),
+        i
+      ),
+      
+      # Brand name
+      div(
+        style = "flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px;",
+        tags$span(
+          style = paste0(
+            "font-size: 12px; font-weight: ", if (is_main) "700" else "500",
+            "; color: #2d3748; white-space: nowrap; overflow: hidden; ",
+            "text-overflow: ellipsis;"
+          ),
+          row$brand_name
+        ),
+        if (is_main) tags$span(
+          style = "background: #667eea; color: white; font-size: 7px; 
+                   padding: 1px 4px; border-radius: 5px; font-weight: 600;
+                   white-space: nowrap; flex-shrink: 0; line-height: 1.6;",
+          "YOU"
+        )
+      ),
+      
+      # AIRR score
+      div(
+        style = paste0(
+          "flex: 0 0 40px; text-align: right; font-size: 16px; font-weight: 800; ",
+          "color: ", score_color(airr_val), "; flex-shrink: 0;"
+        ),
+        airr_val
+      ),
+      
+      # Divider
+      div(style = "flex: 0 0 1px; height: 24px; background: #e2e8f0; flex-shrink: 0;"),
+      
+      # 4 P scores
+      score_cell(row$presence_score,    BRAND_THEME$presence),
+      score_cell(row$perception_score,  BRAND_THEME$perception),
+      score_cell(row$prestige_score,    BRAND_THEME$prestige),
+      score_cell(row$persistence_score, BRAND_THEME$persistence)
+    )
+  })
+  
+  div(
+    # Header row
+    div(
+      style = "display: flex; align-items: center; padding: 7px 10px; gap: 6px;
+               background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+               border-radius: 8px 8px 0 0;",
+      
+      div(style = "flex: 0 0 22px; flex-shrink: 0;"),
+      
+      div(
+        style = "flex: 1;",
+        tags$span(
+          style = "color: #a0aec0; font-size: 9px; font-weight: 600;
+                   text-transform: uppercase; letter-spacing: 1px;",
+          "Brand"
+        )
+      ),
+      
+      div(
+        style = "flex: 0 0 40px; text-align: right; flex-shrink: 0;",
+        tags$span(
+          style = "color: #a0aec0; font-size: 9px; font-weight: 700;
+                   text-transform: uppercase; letter-spacing: 1px;",
+          "AiRR"
+        )
+      ),
+      
+      div(style = "flex: 0 0 1px; height: 16px; background: #4a5568; flex-shrink: 0;"),
+      
+      div(
+        style = "flex: 0 0 38px; text-align: center;",
+        tags$span(
+          style = "color: #27AE60; font-size: 8px; font-weight: 600;
+                   text-transform: uppercase; letter-spacing: 0.5px;",
+          "Pres"
+        )
+      ),
+      div(
+        style = "flex: 0 0 38px; text-align: center;",
+        tags$span(
+          style = "color: #D4A843; font-size: 8px; font-weight: 600;
+                   text-transform: uppercase; letter-spacing: 0.5px;",
+          "Perc"
+        )
+      ),
+      div(
+        style = "flex: 0 0 38px; text-align: center;",
+        tags$span(
+          style = "color: #8E44AD; font-size: 8px; font-weight: 600;
+                   text-transform: uppercase; letter-spacing: 0.5px;",
+          "Prest"
+        )
+      ),
+      div(
+        style = "flex: 0 0 38px; text-align: center;",
+        tags$span(
+          style = "color: #2980B9; font-size: 8px; font-weight: 600;
+                   text-transform: uppercase; letter-spacing: 0.5px;",
+          "Pers"
+        )
+      )
+    ),
+    
+    # Rows
+    div(
+      style = "border: 1px solid #e2e8f0; border-top: none;
+               border-radius: 0 0 8px 8px; overflow: hidden;",
+      do.call(tagList, rows)
+    )
+  )
+}
+
+# ============================================
+# Brand overview compact rankings
+# ============================================
+
+output$dash_rankings_table_compact <- renderUI({
+  req(dash_latest_scores())
+  
+  data <- dash_latest_scores() %>%
+    arrange(desc(airr_score)) %>%
+    mutate(rank = row_number())
+  
+  render_compact_rankings(data)
+})
+
+# ============================================
+# Prompt overview compact rankings
+# ============================================
+
+output$dash_query_rankings_table_compact <- renderUI({
+  req(dash_query_timeseries())
+  
+  data <- dash_query_timeseries()
+  if (nrow(data) == 0) return(NULL)
+  
+  data <- data %>%
+    group_by(brand_name, brand_id, main_brand_flag) %>%
+    filter(date == max(date)) %>%
+    ungroup() %>%
+    arrange(desc(airr_score)) %>%
+    mutate(rank = row_number())
+  
+  render_compact_rankings(data)
+})
+
+# ============================================
+# Brand Overview — Customer Profiles section
+# ============================================
+
+output$brand_overview_profiles_section <- renderUI({
+  req(rv$logged_in, rv$login_id)
+  
+  sub <- user_subscription()
+  
+  # Non-Enterprise gate
+  if (sub$subscription_name != "Enterprise") {
     return(
       div(
         style = "text-align: center; padding: 30px;",
-        actionButton(
-          "generate_brand_summary",
-          div(
-            icon("wand-magic-sparkles", style = "font-size: 20px; margin-bottom: 8px;"),
-            br(),
-            "Generate AI Analysis"
-          ),
-          style = "background: linear-gradient(135deg, #667eea, #764ba2); color: white; 
-                   border: none; border-radius: 12px; padding: 20px 40px; font-size: 14px; 
-                   font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(102,126,234,0.3);
-                   transition: transform 0.2s, box-shadow 0.2s;",
-          class = "ai-generate-btn"
+        div(
+          style = "background: linear-gradient(135deg, rgba(142,68,173,0.06), 
+                   rgba(142,68,173,0.02)); border: 1px dashed rgba(142,68,173,0.3);
+                   border-radius: 12px; padding: 30px 20px; max-width: 500px; 
+                   margin: 0 auto;",
+          icon("crown", class = "fa-2x", style = "color: #8E44AD; margin-bottom: 12px;"),
+          div(style = "font-size: 15px; font-weight: 600; color: #2d3748; margin-bottom: 6px;",
+              "Customer Profiles — Enterprise Feature"),
+          div(style = "font-size: 13px; color: #718096; margin-bottom: 16px; line-height: 1.5;",
+              "See how different customer segments perceive your brand vs competitors."),
+          actionButton("upgrade_from_brand_profiles", "View Plans",
+                       icon = icon("arrow-up"),
+                       style = "background: #8E44AD; color: white; border: none;
+                                border-radius: 8px; padding: 8px 20px; font-weight: 600;")
         )
       )
     )
   }
   
-  # Check if still loading (future in progress)
-  if (identical(summary, "loading")) {
+  profiles <- user_profiles()
+  
+  if (nrow(profiles) == 0) {
     return(
       div(
-        style = "text-align: center; padding: 40px;",
-        tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 24px; color: #667eea;"),
-        p(style = "color: #a0aec0; margin-top: 12px;", "Generating analysis...")
+        style = "text-align: center; padding: 30px; color: #a0aec0;",
+        icon("users", class = "fa-2x", style = "margin-bottom: 10px; color: #e2e8f0;"),
+        p("No profiles set up yet."),
+        actionButton("manage_profiles_from_brand2", "Add Profiles",
+                     icon = icon("plus"),
+                     style = "background: #8E44AD; color: white; border: none;
+                              border-radius: 8px; padding: 8px 20px; font-weight: 600;")
       )
     )
   }
   
-  # Display the summary
-  paragraphs <- strsplit(summary, "\n\n|\n")[[1]]
-  paragraphs <- paragraphs[nchar(trimws(paragraphs)) > 0]
-  
+  # Profile score cards grid
   div(
-    # Header with regenerate button
-    div(
-      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
+    style = "display: flex; flex-wrap: wrap; gap: 16px;",
+    lapply(1:nrow(profiles), function(i) {
+      pid   <- profiles$profile_id[i]
+      pname <- profiles$profile_name[i]
+      uiOutput(paste0("brand_overview_profile_card_", pid))
+    })
+  )
+})
+
+# Render individual profile cards for brand overview
+observe({
+  req(rv$logged_in, rv$login_id)
+  profiles <- tryCatch(user_profiles(), error = function(e) NULL)
+  if (is.null(profiles) || nrow(profiles) == 0) return()
+  
+  lapply(1:nrow(profiles), function(i) {
+    pid        <- profiles$profile_id[i]
+    pname      <- profiles$profile_name[i]
+    local_pid  <- pid
+    local_name <- pname
+    
+    output[[paste0("brand_overview_profile_card_", local_pid)]] <- renderUI({
+      scores <- get_profile_brand_scores(rv$login_id, local_pid)
+      
+      score_color <- function(val) {
+        if (is.na(val) || is.null(val)) return("#cbd5e0")
+        if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+      }
+      
       div(
-        style = "display: flex; align-items: center; gap: 8px;",
-        icon("wand-magic-sparkles", style = "color: #667eea; font-size: 16px;"),
-        tags$span(style = "color: #667eea; font-weight: 600; font-size: 13px; 
-                           text-transform: uppercase; letter-spacing: 1px;",
-                  "AI Analysis")
-      ),
-      actionButton(
-        "generate_brand_summary",
-        "Regenerate",
-        icon = icon("rotate"),
-        style = "background: transparent; color: #a0aec0; border: 1px solid #e2e8f0; 
-                 border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 500;"
+        style = "background: white; border-radius: 12px; padding: 16px;
+                 border: 1px solid #e2e8f0; min-width: 220px; flex: 1;
+                 border-top: 3px solid #8E44AD;",
+        
+        # Profile name header
+        div(
+          style = "display: flex; align-items: center; gap: 8px; margin-bottom: 14px;",
+          div(
+            style = "width: 28px; height: 28px; border-radius: 8px; 
+                     background: rgba(142,68,173,0.1); display: flex; 
+                     align-items: center; justify-content: center; color: #8E44AD;",
+            icon("users", style = "font-size: 12px;")
+          ),
+          div(
+            style = "font-size: 13px; font-weight: 600; color: #2d3748; 
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
+            local_name
+          )
+        ),
+        
+        if (is.null(scores) || nrow(scores) == 0) {
+          div(
+            style = "text-align: center; padding: 15px 0; color: #a0aec0;",
+            tags$i(class = "fa fa-spinner fa-spin",
+                   style = "font-size: 16px; color: #8E44AD;"),
+            p(style = "font-size: 11px; margin-top: 6px;", "Calculating...")
+          )
+        } else {
+          # Show main brand score prominently, then competitors below
+          main  <- scores %>% filter(main_brand_flag == TRUE)
+          comps <- scores %>% filter(main_brand_flag == FALSE) %>%
+            arrange(desc(airr_score))
+          
+          tagList(
+            # Main brand
+            if (nrow(main) > 0) {
+              div(
+                style = "margin-bottom: 10px;",
+                div(
+                  style = "display: flex; justify-content: space-between; 
+                           align-items: center; margin-bottom: 4px;",
+                  tags$span(
+                    style = "font-size: 12px; font-weight: 700; color: #2d3748;",
+                    paste0("★ ", main$brand_name[1])
+                  ),
+                  tags$span(
+                    style = paste0("font-size: 18px; font-weight: 800; color: ",
+                                   score_color(main$airr_score[1]), ";"),
+                    round(main$airr_score[1], 1)
+                  )
+                ),
+                # Mini sub-score bar
+                div(
+                  style = "display: flex; gap: 4px;",
+                  lapply(list(
+                    list(v = main$presence_score[1],   l = "Pres"),
+                    list(v = main$perception_score[1], l = "Perc"),
+                    list(v = main$prestige_score[1],   l = "Prest"),
+                    list(v = main$persistence_score[1],l = "Pers")
+                  ), function(s) {
+                    div(
+                      style = "flex: 1; text-align: center;",
+                      div(style = paste0("font-size: 11px; font-weight: 700; color: ",
+                                         score_color(s$v), ";"),
+                          round(s$v, 0)),
+                      div(style = "font-size: 9px; color: #a0aec0;", s$l)
+                    )
+                  })
+                )
+              )
+            },
+            
+            # Divider
+            if (nrow(comps) > 0) hr(style = "margin: 8px 0; border-color: #f0f0f0;"),
+            
+            # Competitors
+            if (nrow(comps) > 0) {
+              div(
+                lapply(1:nrow(comps), function(j) {
+                  div(
+                    style = "display: flex; justify-content: space-between; 
+                             align-items: center; padding: 3px 0;",
+                    tags$span(
+                      style = "font-size: 12px; color: #4a5568; white-space: nowrap;
+                               overflow: hidden; text-overflow: ellipsis; max-width: 130px;",
+                      comps$brand_name[j]
+                    ),
+                    tags$span(
+                      style = paste0("font-size: 14px; font-weight: 700; color: ",
+                                     score_color(comps$airr_score[j]), ";"),
+                      round(comps$airr_score[j], 1)
+                    )
+                  )
+                })
+              )
+            }
+          )
+        }
       )
-    ),
-    
-    # Analysis text
-    do.call(tagList, lapply(paragraphs, function(p) {
-      tags$p(style = "color: #4a5568; font-size: 14px; line-height: 1.7; margin-bottom: 12px;", p)
-    })),
-    
-    # Timestamp
-    tags$small(
-      style = "color: #cbd5e0; font-size: 11px; font-style: italic;",
-      paste("Generated", format(Sys.time(), "%b %d, %Y at %I:%M %p"))
-    )
-  )
-})
-
-# ============================================
-# Prompt Overview — AI Summary
-# ============================================
-
-prompt_ai_summary <- reactiveVal(NULL)
-
-# Reset when prompt changes
-observeEvent(input$dash_query_select, {
-  prompt_ai_summary(NULL)
-})
-
-observeEvent(input$generate_prompt_summary, {
-  req(dash_query_timeseries(), rv$brand_name, input$dash_query_select)
-  
-  # Show loading spinner immediately
-  prompt_ai_summary("loading")
-  
-  data_text <- format_prompt_data_for_ai(
-    dash_query_timeseries(),
-    rv$brand_name,
-    input$dash_query_select
-  )
-  
-  context <- paste0(
-    "This is a prompt-specific analysis for '", rv$brand_name, 
-    "'. The prompt '", input$dash_query_select, 
-    "' was asked to an AI model multiple times. The scores show how well each brand ",
-    "performs when this specific question is asked. ",
-    "Presence = how often the brand appears in responses. ",
-    "Perception = accuracy and sentiment. ",
-    "Prestige = competitive ranking. ",
-    "Persistence = consistency over time. ",
-    "AiRR = weighted combination."
-  )
-  
-  future_promise({
-    generate_ai_summary(context, data_text)
-  }) %...>% (function(result) {
-    prompt_ai_summary(result)
-  }) %...!% (function(err) {
-    prompt_ai_summary(paste("Error generating analysis:", err$message))
+    })
   })
 })
 
-output$prompt_ai_summary_ui <- renderUI({
-  
-  summary <- prompt_ai_summary()
-  
-  if (is.null(summary)) {
-    return(
-      div(
-        style = "text-align: center; padding: 30px;",
-        actionButton(
-          "generate_prompt_summary",
-          div(
-            icon("wand-magic-sparkles", style = "font-size: 20px; margin-bottom: 8px;"),
-            br(),
-            "Generate AI Analysis"
-          ),
-          style = "background: linear-gradient(135deg, #667eea, #764ba2); color: white; 
-                   border: none; border-radius: 12px; padding: 20px 40px; font-size: 14px; 
-                   font-weight: 600; cursor: pointer; box-shadow: 0 4px 15px rgba(102,126,234,0.3);",
-          class = "ai-generate-btn"
-        )
-      )
-    )
-  }
-  
-  if (identical(summary, "loading")) {
-    return(
-      div(
-        style = "text-align: center; padding: 40px;",
-        tags$i(class = "fa fa-spinner fa-spin", style = "font-size: 24px; color: #667eea;"),
-        p(style = "color: #a0aec0; margin-top: 12px;", "Generating analysis...")
-      )
-    )
-  }
-  
-  paragraphs <- strsplit(summary, "\n\n|\n")[[1]]
-  paragraphs <- paragraphs[nchar(trimws(paragraphs)) > 0]
-  
-  div(
-    div(
-      style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;",
-      div(
-        style = "display: flex; align-items: center; gap: 8px;",
-        icon("wand-magic-sparkles", style = "color: #667eea; font-size: 16px;"),
-        tags$span(style = "color: #667eea; font-weight: 600; font-size: 13px; 
-                           text-transform: uppercase; letter-spacing: 1px;",
-                  "AI Analysis")
-      ),
-      actionButton(
-        "generate_prompt_summary",
-        "Regenerate",
-        icon = icon("rotate"),
-        style = "background: transparent; color: #a0aec0; border: 1px solid #e2e8f0; 
-                 border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 500;"
-      )
-    ),
-    
-    do.call(tagList, lapply(paragraphs, function(p) {
-      tags$p(style = "color: #4a5568; font-size: 14px; line-height: 1.7; margin-bottom: 12px;", p)
-    })),
-    
-    tags$small(
-      style = "color: #cbd5e0; font-size: 11px; font-style: italic;",
-      paste("Generated", format(Sys.time(), "%b %d, %Y at %I:%M %p"))
-    )
-  )
+observeEvent(input$upgrade_from_brand_profiles, {
+  shinyjs::click("upgrade_btn")
+})
+
+observeEvent(input$manage_profiles_from_brand2, {
+  updateTabItems(session, "sidebar", "profiles")
 })

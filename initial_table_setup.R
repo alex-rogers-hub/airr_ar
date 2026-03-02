@@ -309,18 +309,37 @@ add_customer <- function(con, customer_name) {
 #                       where date = '2026-02-12';"))
 
 
-dbExecute(pool,paste0("update fact_presence_history
-                      set date = '2026-02-17' where date = '2026-02-18';"))
-dbExecute(pool,paste0("update fact_perception_history
-                      set date = '2026-02-17' where date = '2026-02-18';"))
-dbExecute(pool,paste0("update fact_prestige_history
-                      set date = '2026-02-17' where date = '2026-02-18';"))
-dbExecute(pool,paste0("update fact_persistence_history
-                      set date = '2026-02-17' where date = '2026-02-18';"))
-dbExecute(pool,paste0("update fact_airr_history
-                      set date = '2026-02-17' where date = '2026-02-18';"))
-dbExecute(pool,paste0("update fact_query_history
-                      set date = '2026-02-17' where date = '2026-02-18';"))
+# dbExecute(pool,paste0("update fact_presence_history
+#                       set date = '2026-02-17' where date = '2026-02-18';"))
+# dbExecute(pool,paste0("update fact_perception_history
+#                       set date = '2026-02-17' where date = '2026-02-18';"))
+# dbExecute(pool,paste0("update fact_prestige_history
+#                       set date = '2026-02-17' where date = '2026-02-18';"))
+# dbExecute(pool,paste0("update fact_persistence_history
+#                       set date = '2026-02-17' where date = '2026-02-18';"))
+# dbExecute(pool,paste0("update fact_airr_history
+#                       set date = '2026-02-17' where date = '2026-02-18';"))
+# dbExecute(pool,paste0("update fact_query_history
+#                       set date = '2026-02-17' where date = '2026-02-18';"))
+
+# Step 1: Delete the bad 2026-02-26 data
+dbExecute(pool, "DELETE FROM fact_presence_history    WHERE date = '2026-02-26';")
+dbExecute(pool, "DELETE FROM fact_perception_history  WHERE date = '2026-02-26';")
+dbExecute(pool, "DELETE FROM fact_prestige_history    WHERE date = '2026-02-26';")
+dbExecute(pool, "DELETE FROM fact_persistence_history WHERE date = '2026-02-26';")
+dbExecute(pool, "DELETE FROM fact_airr_history        WHERE date = '2026-02-26';")
+dbExecute(pool, "DELETE FROM fact_query_history       WHERE date = '2026-02-26';")
+
+# Step 2: Relabel 2026-02-27 as 2026-02-26
+dbExecute(pool, "UPDATE fact_presence_history    SET date = '2026-02-26' WHERE date = '2026-02-27';")
+dbExecute(pool, "UPDATE fact_perception_history  SET date = '2026-02-26' WHERE date = '2026-02-27';")
+dbExecute(pool, "UPDATE fact_prestige_history    SET date = '2026-02-26' WHERE date = '2026-02-27';")
+dbExecute(pool, "UPDATE fact_persistence_history SET date = '2026-02-26' WHERE date = '2026-02-27';")
+dbExecute(pool, "UPDATE fact_airr_history        SET date = '2026-02-26' WHERE date = '2026-02-27';")
+dbExecute(pool, "UPDATE fact_query_history       SET date = '2026-02-26' WHERE date = '2026-02-27';")
+
+
+
 # 
 # 
 # dim_customer <- dbGetQuery(con,'select * from dim_customer')
@@ -329,11 +348,40 @@ dbExecute(pool,paste0("update fact_query_history
 # 
 # fact_airr_history <- dbGetQuery(pool,'select * from fact_airr_history')
 # fact_presence_history <- dbGetQuery(pool,'select * from fact_presence_history')
+# fact_perception_history <- dbGetQuery(pool,'select * from fact_perception_history')
+# fact_prestige_history <- dbGetQuery(pool,'select * from fact_prestige_history')
+# fact_persistence_history <- dbGetQuery(pool,'select * from fact_persistence_history')
 # fact_query_history <- dbGetQuery(pool,'select * from fact_query_history')
 # dim_user <- dbGetQuery(pool,'select * from dim_user')
 # dim_brand <- dbGetQuery(pool,'select * from dim_brand')
+# dim_query <- dbGetQuery(pool,'select * from dim_query')
 # dim_subscription <- dbGetQuery(pool,'select * from dim_subscription')
 # fact_user_sub_level <- dbGetQuery(pool,'select * from fact_user_sub_level')
+# fact_user_brands_tracked <- dbGetQuery(pool,'select * from fact_user_brands_tracked')
 # fact_user_queries_tracked <- dbGetQuery(pool,'select * from fact_user_queries_tracked')
 
 
+query_history_export <- dbGetQuery(con, "
+  SELECT 
+    db.brand_name,
+    dq.query_string,
+    fqh.date,
+    fqh.presence_score,
+    fqh.perception_score,
+    fqh.prestige_score,
+    fqh.persistence_score,
+    fqh.airr_score
+  FROM fact_query_history fqh
+  INNER JOIN dim_brand db ON db.brand_id = fqh.brand_id
+  INNER JOIN dim_query dq ON dq.query_id = fqh.query_id
+  ORDER BY db.brand_name, dq.query_string, fqh.date
+")
+
+write.csv(query_history_export, 
+          file = paste0("query_history_export_", Sys.Date(), ".csv"), 
+          row.names = FALSE)
+
+message(sprintf("✓ Exported %d rows to query_history_export_%s.csv", 
+                nrow(query_history_export), Sys.Date()))
+
+null_hist <- dbGetQuery(pool,'SELECT COUNT(*) FROM fact_airr_history WHERE login_id IS NULL;')

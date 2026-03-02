@@ -6,6 +6,8 @@ source("ui_scripts/ui_brand_overview.R")
 source("ui_scripts/ui_prompt_overview.R")
 source("ui_scripts/ui_account.R")
 source("ui_scripts/ui_comparisons.R")
+source("ui_scripts/ui_onboarding.R")
+source("ui_scripts/ui_profiles.R")
 
 ui <- dashboardPage(
   skin = "blue",
@@ -45,6 +47,9 @@ ui <- dashboardPage(
       id = "sidebar",
       menuItem("Brand Overview", tabName = "brand_overview", icon = icon("building")),
       menuItem("Prompt Overview", tabName = "prompt_overview", icon = icon("comment-dots")),
+      menuItem("Customer Profiles", tabName = "profiles", 
+               icon = icon("users"), 
+               badgeLabel = "Enterprise", badgeColor = "purple"),
       # menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale")),
       menuItem("Account", tabName = "account", icon = icon("user-cog"))
     )
@@ -91,7 +96,6 @@ ui <- dashboardPage(
           
           conditionalPanel(
             condition = "input.show_register == true",
-            textInput("register_brand_name", NULL, placeholder = "Brand Name"),
             textInput("register_email", NULL, placeholder = "Email"),
             passwordInput("register_password", NULL, placeholder = "Password"),
             passwordInput("register_password_confirm", NULL, placeholder = "Confirm Password"),
@@ -106,15 +110,24 @@ ui <- dashboardPage(
       )
     ),
     
+    # ONBOARDING (logged in but not yet onboarded)
+    conditionalPanel(
+      condition = "output.logged_in == true && output.onboarding_complete == false",
+      div(
+        style = "padding: 20px;",
+        ui_onboarding()
+      )
+    ),
+    
     # ============================================
-    # MAIN APP (logged in)
+    # MAIN APP (logged in + onboarded)
     # ============================================
     conditionalPanel(
-      condition = "output.logged_in == true",
-      
+      condition = "output.logged_in == true && output.onboarding_complete == true",
       tabItems(
         tab_brand_overview,
         tab_prompt_overview,
+        tab_profiles,
         tab_account,
         tab_comparisons
       )

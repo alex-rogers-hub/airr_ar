@@ -90,17 +90,16 @@ LEADERSHIP_KEYWORDS_WEIGHTED <- list(
 find_first_mention <- function(text, brand_patterns) {
   if (is.null(brand_patterns)) return(NA_integer_)
   
-  text_lower <- tolower(text)
+  text_lower <- tolower(sanitise_text(text))
   
   positions <- map_int(brand_patterns, function(pattern) {
-    matches <- str_locate_all(text_lower, tolower(pattern))[[1]]
+    matches <- str_locate_all(text_lower, tolower(sanitise_text(pattern)))[[1]]
     if (nrow(matches) > 0) {
       return(matches[1, "start"])
     }
     return(NA_integer_)
   })
   
-  # Return earliest position
   positions <- positions[!is.na(positions)]
   if (length(positions) == 0) return(NA_integer_)
   return(min(positions))
@@ -113,13 +112,13 @@ find_first_mention <- function(text, brand_patterns) {
 find_all_mentions <- function(text, brand_patterns) {
   if (is.null(brand_patterns)) return(list())
   
-  text_lower <- tolower(text)
+  text_lower    <- tolower(sanitise_text(text))
   all_positions <- list()
   
   for (pattern in brand_patterns) {
-    matches <- str_locate_all(text_lower, tolower(pattern))[[1]]
+    matches <- str_locate_all(text_lower, tolower(sanitise_text(pattern)))[[1]]
     if (nrow(matches) > 0) {
-      all_positions <- c(all_positions, 
+      all_positions <- c(all_positions,
                          purrr::transpose(as.data.frame(matches)))
     }
   }
@@ -275,7 +274,7 @@ calculate_auth_and_lead <- function(brand_name,
                                     # context_window = 75,
                                     weighted_keywords = AUTHORITY_KEYWORDS_WEIGHTED) {
   # removing context window as the whole text is regarding the brand
-  resp_data <- tolower(response_data)
+  resp_data <- sanitise_text(tolower(response_data))
   
   # Initialize results storage
   authority_results <- tibble(
@@ -674,10 +673,11 @@ test_prestige_stability <- function(brand_name,
 #' @return List with prestige score and detailed metrics
 calculate_prestige_from_prompts_sep <- function(brand_name,
                                                 brand_id,
-                                            rel_responses,
-                                            context_window = 150,
-                                            model = "gpt-4o-mini",
-                                            temperature = 0.1) {
+                                                login_id,      # <-- NEW
+                                                rel_responses,
+                                                context_window = 150,
+                                                model = "gpt-4o-mini",
+                                                temperature = 0.1) {
   
   # Initialize results storage
   mention_analysis <- tibble(
@@ -824,8 +824,10 @@ calculate_prestige_from_prompts_sep <- function(brand_name,
     
     other_brands_df <- dbGetQuery(con,
                                   "SELECT prestige_rank_comps_brands FROM fact_prestige_history
-       WHERE brand_id = $1 AND date = $2;",
-                                  params = list(brand_id, Sys.Date()))
+       WHERE brand_id = $1
+         AND login_id = $2        -- NEW filter
+         AND date = $3;",
+                                  params = list(brand_id, login_id, Sys.Date()))
     
     if(nrow(other_brands_df) == 0){
       other_brands <- "NA"

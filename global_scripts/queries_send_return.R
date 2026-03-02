@@ -1,134 +1,126 @@
-
-
-#' Calculate competitive rank based on mention order -------------
-#' @param brand_name Name of the brand being scored
-#' @param model Character, LLM model name
-#' @param temperature Numeric, LLM temperature parameter
-#' @return List with rank, mentioned_brands, and rank_order
 all_queries <- function(brand_name,
-                             model = "gpt-4o-mini",
-                             temperature = 0.1) {
+                        industry       = NULL,
+                        model          = "gpt-4o-mini",
+                        temperature    = 0.1,
+                        brand_reach    = "global",
+                        reach_country  = NULL,
+                        reach_region   = NULL,
+                        reach_postcode = NULL) {
+  
+  reach_context <- build_reach_context(brand_reach, reach_country, reach_region, reach_postcode)
+  reach_str     <- if (nzchar(reach_context)) paste0(" in ", reach_context) else ""
+  near_me_str   <- build_near_me_suffix(brand_reach, reach_country, reach_postcode)
+  
+  has_industry  <- !is.null(industry) && nzchar(industry)
+  industry_str  <- if (has_industry) industry else "their industry"
   
   reps <- 10
   
-  comp_response_list <- ask_chatgpt_async(
-    prompts = c(rep(paste0('Who are the top 10 competitors for the brand ', 
-                           brand_name, 
-                           '? Return only the brand names separated by semi-colons and no other information'),10),
-                rep(paste0('In what industry is the brand ', brand_name, 
-                           '? Give your answer in the form "brand is in the __ industry", giving no other information'),10),
-                rep(paste0('Tell me about the brand ', brand_name),10),
-                
-                # Basic Facts
-                rep(paste0("When was ", brand_name, " founded? Give only the year, no other words."), 10),
-                rep(paste0("Where is ", brand_name, " headquartered? Give only the city and country."), 10),
-                rep(paste0("Who is the current CEO of ", brand_name, "? Give only the name."), 10),
-                rep(paste0("What industry is ", brand_name, " in? Give a one-sentence answer."), 10),
-                rep(paste0("Is ", brand_name, " owned by a parent company? If so, which one? Give only the name of the company or the word 'none'"), 10),
-                
-                # Product/Service Facts
-                rep(paste0("What are the main products or services of ", brand_name, "? List the top 3."), 10),
-                rep(paste0("How would you describe ", brand_name, "'s pricing strategy: budget, mid-range, or premium? Only respond with one of those three options"), 10),
-                rep(paste0("Who is ", brand_name, "'s primary target market?"), 10),
-                
-                # Historical Facts
-                rep(paste0("What was a major milestone in ", brand_name, "'s history?"), 10),
-                rep(paste0("How did ", brand_name, " get started? Give a brief summary."), 10),
-                
-                # Company Size
-                rep(paste0("Approximately how many employees does ", brand_name, " have? Give the answer as a number only"), 10),
-                rep(paste0("What is the approximate annual revenue of ", brand_name, "? Give the answer as a number of US dollars only"), 10),
-                rep(paste0("In which countries or regions does ", brand_name, " operate? List only the country names with no extra information"), 10)),
-    model = model,
+  prompts <- c(
+    # 1-10: Competitors
+    rep(paste0('Who are the top 10 competitors for the brand ', brand_name, reach_str,
+               '? Return only the brand names separated by semi-colons and no other information'), reps),
+    # 11-20: Industry
+    rep(paste0('In what industry is the brand ', brand_name, reach_str,
+               '? Give your answer in the form "brand is in the __ industry", giving no other information'), reps),
+    # 21-30: Description
+    rep(paste0('Tell me about the brand ', brand_name, reach_str), reps),
+    # 31-40: Founded
+    rep(paste0("When was ", brand_name, " founded? Give only the year, no other words."), reps),
+    # 41-50: HQ
+    rep(paste0("Where is ", brand_name, " headquartered", reach_str, 
+               "? Give only the city and country."), reps),
+    # 51-60: CEO
+    rep(paste0("Who is the current CEO of ", brand_name, 
+               "? Give only the name."), reps),
+    # 61-70: Industry detail
+    rep(paste0("What industry is ", brand_name, " in", reach_str, 
+               "? Give a one-sentence answer."), reps),
+    # 71-80: Parent company
+    rep(paste0("Is ", brand_name, " owned by a parent company? ",
+               "If so, which one? Give only the name of the company or the word 'none'"), reps),
+    # 81-90: Products
+    rep(paste0("What are the main products or services of ", brand_name, reach_str, 
+               "? List the top 3."), reps),
+    # 91-100: Pricing
+    rep(paste0("How would you describe ", brand_name, "'s pricing strategy", reach_str, 
+               ": budget, mid-range, or premium? Only respond with one of those three options"), reps),
+    # 101-110: Target market
+    rep(paste0("Who is ", brand_name, "'s primary target market", reach_str, "?"), reps),
+    # 111-120: Milestone
+    rep(paste0("What was a major milestone in ", brand_name, "'s history?"), reps),
+    # 121-130: Origin
+    rep(paste0("How did ", brand_name, " get started? Give a brief summary."), reps),
+    # 131-140: Employees
+    rep(paste0("Approximately how many employees does ", brand_name, 
+               " have? Give the answer as a number only"), reps),
+    # 141-150: Revenue
+    rep(paste0("What is the approximate annual revenue of ", brand_name, 
+               "? Give the answer as a number of US dollars only"), reps),
+    # 151-160: Countries
+    rep(paste0("In which countries or regions does ", brand_name, " operate", reach_str, 
+               "? List only the country names with no extra information"), reps),
+    
+    # 161-170: Presence query 1
+    rep(paste0('What are the best brands in the ', industry_str, ' industry',
+               if (nzchar(near_me_str)) near_me_str else reach_str, '?'), reps),
+    # 171-180: Presence query 2
+    rep(paste0("What are the top brands in ", industry_str,
+               if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps),
+    # 181-190: Presence query 3
+    rep(paste0("Which companies lead the ", industry_str, " industry",
+               if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps),
+    # 191-200: Presence query 4
+    rep(paste0("Recommend some ", industry_str, " brands",
+               if (nzchar(near_me_str)) near_me_str else reach_str), reps),
+    # 201-210: Presence query 5
+    rep(paste0("What are popular ", industry_str, " companies",
+               if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps),
+    # 211-220: Presence query 6
+    rep(paste0("List major players in ", industry_str,
+               if (nzchar(near_me_str)) near_me_str else reach_str), reps)
+  )
+  
+  # Single API call for everything
+  all_responses <- ask_chatgpt_async(
+    prompts     = prompts,
+    model       = model,
     temperature = temperature
   )
   
-  # Split responses into groups
-  response_groups1 <- list(
-    competitor_list = list(
-      data = comp_response_list[1:reps],
-      type = "text",
-      question = "Who are the top 10 competitors?"
-    ),
-    industry_list = list(
-      data = comp_response_list[(reps+1):(2*reps)],
-      type = "text",
-      question = "In what industry is the brand?"
-    ),
-    description_list = list(
-      data = comp_response_list[(2*reps+1):(3*reps)],
-      type = "text",
-      question = "Tell me about the brand?"
-    ),
-    founded = list(
-      data = comp_response_list[(3*reps+1):(4*reps)],
-      type = "year",
-      question = "When was the brand founded?"
-    ),
-    hq = list(
-      data = comp_response_list[(4*reps+1):(5*reps)],
-      type = "location",
-      question = "Where is the brand headquartered?"
-    ),
-    ceo = list(
-      data = comp_response_list[(5*reps+1):(6*reps)],
-      type = "name",
-      question = "Who is the current CEO?"
-    ),
-    industry = list(
-      data = comp_response_list[(6*reps+1):(7*reps)],
-      type = "text",
-      question = "What industry is the brand in?"
-    ),
-    parent_company = list(
-      data = comp_response_list[(7*reps+1):(8*reps)],
-      type = "categorical",
-      question = "Parent company"
-    ),
-    products_services = list(
-      data = comp_response_list[(8*reps+1):(9*reps)],
-      type = "list",
-      question = "Main products/services"
-    ),
-    pricing = list(
-      data = comp_response_list[(9*reps+1):(10*reps)],
-      type = "categorical",
-      question = "Pricing strategy"
-    ),
-    target_market = list(
-      data = comp_response_list[(10*reps+1):(11*reps)],
-      type = "text",
-      question = "Primary target market"
-    ),
-    milestone = list(
-      data = comp_response_list[(11*reps+1):(12*reps)],
-      type = "text",
-      question = "Major milestone"
-    ),
-    start = list(
-      data = comp_response_list[(12*reps+1):(13*reps)],
-      type = "text",
-      question = "How the brand started"
-    ),
-    num_employees = list(
-      data = comp_response_list[(13*reps+1):(14*reps)],
-      type = "numeric",
-      question = "Number of employees"
-    ),
-    revenue = list(
-      data = comp_response_list[(14*reps+1):(15*reps)],
-      type = "numeric",
-      question = "Annual revenue"
-    ),
-    countries = list(
-      data = comp_response_list[(15*reps+1):(16*reps)],
-      type = "list",
-      question = "Countries of operation"
-    )
-  )
+  # Helper to grab next n responses sequentially
+  idx <- 0
+  grab <- function(n) {
+    result <- all_responses[(idx + 1):(idx + n)]
+    idx <<- idx + n
+    result
+  }
   
-  # Parse and count competitor mentions
-  competitor_summary <- response_groups1$competitor_list$data %>%
+  competitor_raw   <- grab(reps)
+  industry_raw     <- grab(reps)
+  description_raw  <- grab(reps)
+  founded_raw      <- grab(reps)
+  hq_raw           <- grab(reps)
+  ceo_raw          <- grab(reps)
+  industry_det_raw <- grab(reps)
+  parent_raw       <- grab(reps)
+  products_raw     <- grab(reps)
+  pricing_raw      <- grab(reps)
+  target_raw       <- grab(reps)
+  milestone_raw    <- grab(reps)
+  origin_raw       <- grab(reps)
+  employees_raw    <- grab(reps)
+  revenue_raw      <- grab(reps)
+  countries_raw    <- grab(reps)
+  best_brands_raw    <- grab(reps)
+  top_brands_raw     <- grab(reps)
+  leading_brands_raw <- grab(reps)
+  rec_brands_raw     <- grab(reps)
+  popular_brands_raw <- grab(reps)
+  major_players_raw  <- grab(reps)
+  
+  # Parse competitor summary
+  competitor_summary <- competitor_raw %>%
     unlist() %>%
     str_split(";") %>%
     unlist() %>%
@@ -138,7 +130,8 @@ all_queries <- function(brand_name,
     count(competitor, sort = TRUE, name = "mentions") %>%
     head(9)
   
-  industry_summary <- response_groups1$industry_list$data %>%
+  # Parse industry summary (fallback if not passed in)
+  industry_summary <- industry_raw %>%
     unlist() %>%
     tibble(industry = .) %>%
     mutate(industry_desc = substr(industry, 12 + nchar(brand_name), nchar(industry) - 10)) %>%
@@ -146,85 +139,166 @@ all_queries <- function(brand_name,
     count(industry_desc, sort = TRUE, name = "mentions") %>%
     head(1)
   
-  # second string of queries to start now --
-  
-  industry <- industry_summary$industry_desc[1]
-  
-  comp_second_response_list <- ask_chatgpt_async(
-    prompts = c(rep(paste0('What are the best brands in the ', industry, ' industry?'),10),
-                rep(paste0("What are the top brands in ", industry, "?"),10),
-                rep(paste0("Which companies lead the ", industry, " industry?"),10),
-                rep(paste0("Recommend some ", industry, " brands"),10),
-                rep(paste0("What are popular ", industry, " companies?"),10),
-                rep(paste0("List major players in ", industry),10)
+  # Structured response groups for perception
+  perception_data <- list(
+    founded = list(
+      data     = founded_raw,
+      type     = "year",
+      question = "When was the brand founded?"
     ),
-    model = model,
-    temperature = temperature
+    hq = list(
+      data     = hq_raw,
+      type     = "location",
+      question = "Where is the brand headquartered?"
+    ),
+    ceo = list(
+      data     = ceo_raw,
+      type     = "name",
+      question = "Who is the current CEO?"
+    ),
+    industry = list(
+      data     = industry_det_raw,
+      type     = "text",
+      question = "What industry is the brand in?"
+    ),
+    parent_company = list(
+      data     = parent_raw,
+      type     = "categorical",
+      question = "Parent company"
+    ),
+    products_services = list(
+      data     = products_raw,
+      type     = "list",
+      question = "Main products/services"
+    ),
+    pricing = list(
+      data     = pricing_raw,
+      type     = "categorical",
+      question = "Pricing strategy"
+    ),
+    target_market = list(
+      data     = target_raw,
+      type     = "text",
+      question = "Primary target market"
+    ),
+    milestone = list(
+      data     = milestone_raw,
+      type     = "text",
+      question = "Major milestone"
+    ),
+    start = list(
+      data     = origin_raw,
+      type     = "text",
+      question = "How the brand started"
+    ),
+    num_employees = list(
+      data     = employees_raw,
+      type     = "numeric",
+      question = "Number of employees"
+    ),
+    revenue = list(
+      data     = revenue_raw,
+      type     = "numeric",
+      question = "Annual revenue"
+    ),
+    countries = list(
+      data     = countries_raw,
+      type     = "list",
+      question = "Countries of operation"
+    )
   )
   
-  # Split responses into groups
-  response_groups2 <- list(
-    industry_brands = list(
-      data = comp_second_response_list[1:reps],
-      type = "text",
-      question = "What are the best brands in the industry?"
-    ),
-    industry_brands2 = list(
-      data = comp_second_response_list[(reps+1):(2*reps)],
-      type = "text",
-      question = "What are the top brands in the industry?"
+  # Presence data (industry / competitive landscape queries)
+  presence_data <- list(
+    top_brands = list(
+      data     = top_brands_raw,
+      type     = "text",
+      question = "Top brands in industry"
     ),
     leading_brands = list(
-      data = comp_second_response_list[(2*reps+1):(3*reps)],
-      type = "text",
-      question = "Which companies lead the industry?"
+      data     = leading_brands_raw,
+      type     = "text",
+      question = "Leading companies in industry"
     ),
     rec_brands = list(
-      data = comp_second_response_list[(3*reps+1):(4*reps)],
-      type = "text",
-      question = "Recommend brands in industry?"
+      data     = rec_brands_raw,
+      type     = "text",
+      question = "Recommended brands in industry"
     ),
     popular_companies = list(
-      data = comp_second_response_list[(4*reps+1):(5*reps)],
-      type = "text",
+      data     = popular_brands_raw,
+      type     = "text",
       question = "Popular companies in industry"
     ),
     major_players = list(
-      data = comp_second_response_list[(5*reps+1):(6*reps)],
-      type = "text",
+      data     = major_players_raw,
+      type     = "text",
       question = "Major players in industry"
     )
   )
   
-  # Initialize the return object
-  all_query <- list()
-  
-  all_query$competitor_summary <- competitor_summary
-  all_query$industry_summary <- industry_summary
-  all_query$comp_second_response_list <- response_groups2$industry_brands$data
-  all_query$description_list <- response_groups1$description_list$data
-  all_query$presence_data <- response_groups2[2:6]
-  all_query$perception_data <- response_groups1[4:16]
-  
-  return(
-    all_query
+  list(
+    competitor_summary        = competitor_summary,
+    industry_summary          = industry_summary,
+    comp_second_response_list = best_brands_raw,
+    description_list          = description_raw,
+    presence_data             = presence_data,
+    perception_data           = perception_data
   )
 }
 
+
+# ============================================
+# Prompt queries — used for tracked prompt scoring
+# ============================================
+
+#' Send a prompt n times and return responses as a data frame
+#' @param prompt_input Character vector of prompts (already repeated as needed)
+#' @param model Character
+#' @param temperature Numeric
+#' @return Data frame with columns: prompt, responses
 prompt_queries <- function(prompt_input,
-                           model = "gpt-4o-mini",
+                           model       = "gpt-4o-mini",
                            temperature = 0.1) {
   
   comp_response_list <- ask_chatgpt_async(
-    prompts = prompt_input,
-    model = model,
+    prompts     = prompt_input,
+    model       = model,
     temperature = temperature
   )
   
-  resp_df <- data.frame(prompt = prompt_input,
-                        responses = unlist(comp_response_list))
-  
-  return(
-    resp_df
+  resp_df <- data.frame(
+    prompt    = prompt_input,
+    responses = sanitise_text(unlist(comp_response_list)),
+    stringsAsFactors = FALSE
   )
+  
+  return(resp_df)
+}
+
+
+# ============================================
+# Near-me prompt injection
+# For tracked prompts that contain "near me", replace with actual location
+# ============================================
+
+#' Inject location into a "near me" prompt
+#' @param prompt_text Character, the raw prompt string
+#' @param brand_reach Character
+#' @param reach_country Character or NULL
+#' @param reach_postcode Character or NULL
+#' @return Character, prompt with "near me" replaced by actual location if applicable
+inject_near_me_location <- function(prompt_text,
+                                    brand_reach    = "global",
+                                    reach_country  = NULL,
+                                    reach_postcode = NULL) {
+  
+  if (is.null(brand_reach) || brand_reach != "near_me") return(prompt_text)
+  
+  near_str <- build_near_me_suffix("near_me", reach_country, reach_postcode)
+  
+  if (!nzchar(near_str)) return(prompt_text)
+  
+  # Replace "near me" (case-insensitive) with actual location
+  gsub("near me", near_str, prompt_text, ignore.case = TRUE)
 }

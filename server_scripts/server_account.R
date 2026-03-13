@@ -45,7 +45,7 @@ observe({
   competitors <- user_competitors()
   if (nrow(competitors) > 0 && any(!competitors$has_scores)) {
     invalidateLater(10000, session)
-    rv$brands_refresh <- isolate(rv$brands_refresh) + 1
+    # rv$brands_refresh <- isolate(rv$brands_refresh) + 1
   }
 })
 
@@ -61,12 +61,67 @@ output$account_profile_card <- renderUI({
   tier_icon <- switch(sub$subscription_name,
                       "Free" = "seedling", "Pro" = "gem", "Enterprise" = "crown", "seedling")
   
+  # Fetch main brand's industry + brand_id
+  main_brand_info <- tryCatch(
+    dbGetQuery(pool, "
+      SELECT b.brand_id, b.brand_name, ubt.industry
+      FROM fact_user_brands_tracked ubt
+      JOIN dim_brand b ON b.brand_id = ubt.brand_id
+      WHERE ubt.login_id = $1
+        AND ubt.main_brand_flag = TRUE
+        AND ubt.date_valid_from <= CURRENT_DATE
+        AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+      LIMIT 1",
+               params = list(rv$login_id)),
+    error = function(e) NULL
+  )
+  
+  industry_str <- if (!is.null(main_brand_info) && nrow(main_brand_info) > 0 &&
+                      !is.na(main_brand_info$industry[1]) &&
+                      nzchar(main_brand_info$industry[1] %||% "")) {
+    main_brand_info$industry[1]
+  } else {
+    "Not set"
+  }
+  
+  edit_payload <- if (!is.null(main_brand_info) && nrow(main_brand_info) > 0) {
+    jsonlite::toJSON(list(
+      brand_id   = main_brand_info$brand_id[1],
+      brand_name = main_brand_info$brand_name[1],
+      industry   = if (is.na(main_brand_info$industry[1])) "" 
+      else main_brand_info$industry[1]
+    ), auto_unbox = TRUE)
+  } else NULL
+  
   div(
     class = "account-card account-card-profile",
     div(style = "font-size: 11px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.8;",
         icon(tier_icon), " ", sub$subscription_name),
-    div(style = "font-size: 24px; font-weight: 700; margin: 8px 0 4px;", rv$brand_name),
-    div(style = "font-size: 13px; opacity: 0.8;", rv$email)
+    div(style = "font-size: 24px; font-weight: 700; margin: 8px 0 4px;",
+        rv$brand_name),
+    div(style = "font-size: 13px; opacity: 0.8;",
+        rv$email),
+    
+    # Industry row with edit link
+    div(
+      style = "margin-top: 10px; padding-top: 10px;
+               border-top: 1px solid rgba(255,255,255,0.15);
+               display: flex; align-items: center; gap: 8px;",
+      icon("industry", style = "font-size: 11px; opacity: 0.7;"),
+      tags$span(style = "font-size: 12px; opacity: 0.85;", industry_str),
+      if (!is.null(edit_payload)) {
+        tags$button(
+          style = "background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+                   border-radius: 5px; padding: 2px 8px; color: white; cursor: pointer;
+                   font-size: 11px; font-weight: 600; transition: all 0.15s ease;",
+          onclick = sprintf(
+            "Shiny.setInputValue('edit_industry_btn', %s, {priority: 'event'})",
+            edit_payload
+          ),
+          "Edit"
+        )
+      }
+    )
   )
 })
 
@@ -165,6 +220,132 @@ output$account_query_slot_badge <- renderUI({
   }
 })
 
+# ── Low presence industry nudge ──────────────────────────────
+output$account_industry_nudge <- renderUI({
+  req(rv$logged_in, rv$login_id)
+  
+  has_zero_presence <- tryCatch({
+    result <- dbGetQuery(pool, "
+      SELECT COALESCE(AVG(overall_score), -1) as avg_presence
+      FROM fact_presence_history
+      WHERE login_id = $1
+        AND date >= CURRENT_DATE - INTERVAL '7 days'",
+                         params = list(rv$login_id))
+    score <- result$avg_presence[1]
+    !is.na(score) && score >= 0 && score < 5
+  }, error = function(e) FALSE)
+  
+  if (!has_zero_presence) return(NULL)
+  
+  # Get current industry
+  current_industry <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT industry FROM fact_user_brands_tracked
+      WHERE login_id = $1
+        AND main_brand_flag = TRUE
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)
+      LIMIT 1",
+               params = list(rv$login_id))$industry[1]
+  }, error = function(e) NA)
+  
+  div(
+    style = "background: rgba(231,76,60,0.06);
+             border: 1px solid rgba(231,76,60,0.3);
+             border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;",
+    div(
+      style = "display: flex; align-items: flex-start; gap: 12px;",
+      icon("triangle-exclamation",
+           style = "color: #E74C3C; font-size: 18px; flex-shrink: 0; margin-top: 2px;"),
+      div(
+        style = "flex: 1;",
+        div(
+          style = "font-weight: 600; font-size: 14px; color: #C0392B; margin-bottom: 4px;",
+          "Your Presence score is very low — your industry may be too broad"
+        ),
+        p(
+          style = "font-size: 13px; color: #718096; margin: 0 0 10px; line-height: 1.5;",
+          "AI models struggle to associate brands with broad categories. 
+           A more specific industry description will significantly improve your scores."
+        ),
+        if (!is.na(current_industry) && nzchar(current_industry %||% "")) {
+          div(
+            style = "font-size: 12px; color: #718096; margin-bottom: 10px;",
+            tags$span(style = "font-weight: 600;", "Current: "),
+            tags$span(
+              style = "background: rgba(231,76,60,0.1); color: #C0392B;
+                       padding: 2px 8px; border-radius: 4px; font-weight: 500;",
+              current_industry
+            )
+          )
+        },
+        div(
+          style = "font-size: 12px; color: #718096; margin-bottom: 12px;",
+          "Examples of good specific industries: ",
+          tags$em('"Online Payment Infrastructure"'),
+          ", ",
+          tags$em('"Connected Fitness Hardware"'),
+          ", ",
+          tags$em('"Oat-based Dairy Alternatives"')
+        ),
+        # Inline edit trigger — reuses the existing modal
+        tags$button(
+          style = "background: #E74C3C; color: white; border: none;
+                   border-radius: 8px; padding: 8px 18px; font-weight: 600;
+                   font-size: 13px; cursor: pointer;",
+          onclick = sprintf(
+            "Shiny.setInputValue('edit_industry_btn', %s, {priority: 'event'})",
+            jsonlite::toJSON(list(
+              brand_name = rv$brand_name %||% "",
+              industry   = current_industry %||% ""
+            ), auto_unbox = TRUE)
+          ),
+          icon("pen-to-square", style = "margin-right: 6px;"),
+          "Update Industry"
+        )
+      )
+    )
+  )
+})
+
+# ============================================
+# Timing notice outputs — account page
+# ============================================
+
+output$account_competitor_timing_notice <- renderUI({
+  req(rv$logged_in, rv$login_id)
+  
+  # Only show when user has typed something
+  brand_input <- input$add_competitor_brand_input
+  if (is.null(brand_input) || nchar(trimws(brand_input)) < 2) return(NULL)
+  
+  est <- tryCatch(
+    estimate_competitor_add_time(rv$login_id),
+    error = function(e) NULL
+  )
+  if (is.null(est)) return(NULL)
+  
+  render_timing_notice(est$time_str, est$breakdown, "competitor")
+})
+
+output$account_prompt_timing_notice <- renderUI({
+  req(rv$logged_in, rv$login_id)
+  
+  # Only show when user has typed something
+  prompt_input <- input$add_query_input
+  if (is.null(prompt_input) || nchar(trimws(prompt_input)) < 2) return(NULL)
+  
+  est <- tryCatch(
+    estimate_prompt_add_time(rv$login_id),
+    error = function(e) NULL
+  )
+  if (is.null(est)) return(NULL)
+  
+  render_timing_notice(est$time_str, est$breakdown, "prompt")
+})
+
+
+
 # ============================================
 # Competitor List
 # ============================================
@@ -177,7 +358,8 @@ output$account_competitor_list <- renderUI({
     return(div(
       style = "text-align: center; padding: 30px;",
       icon("building", class = "fa-2x", style = "color: #e2e8f0; margin-bottom: 10px;"),
-      p(style = "color: #a0aec0; font-size: 13px; margin: 0;", "No competitors added yet")
+      p(style = "color: #a0aec0; font-size: 13px; margin: 0;",
+        "No competitors added yet")
     ))
   }
   
@@ -188,9 +370,8 @@ output$account_competitor_list <- renderUI({
     has_scores <- competitors$has_scores[i]
     
     if (has_scores) {
-      # CHANGED: filter by login_id so we see this user's scores
       latest <- dbGetQuery(pool, "
-        SELECT airr_score FROM fact_airr_history 
+        SELECT airr_score FROM fact_airr_history
         WHERE brand_id = $1 AND login_id = $2
         ORDER BY date DESC LIMIT 1",
                            params = list(bid, rv$login_id))
@@ -223,8 +404,11 @@ output$account_competitor_list <- renderUI({
           div(class = "meta", meta_html)),
       div(class = "account-list-actions",
           tags$button(
-            class = "btn-remove",
-            onclick = sprintf("Shiny.setInputValue('remove_brand_id', %d, {priority: 'event'})", bid),
+            class   = "btn-remove",
+            onclick = sprintf(
+              "Shiny.setInputValue('remove_brand_id', %d, {priority: 'event'})",
+              bid
+            ),
             icon("times")
           ))
     )
@@ -308,7 +492,7 @@ observeEvent(input$add_competitor_btn, {
     return()
   }
   
-  # NEW: pull the user's industry from their main brand tracking record
+  # Get industry from main brand
   user_industry <- dbGetQuery(pool, "
     SELECT ubt.industry
     FROM fact_user_brands_tracked ubt
@@ -316,8 +500,8 @@ observeEvent(input$add_competitor_btn, {
       AND ubt.main_brand_flag = TRUE
       AND ubt.date_valid_from <= CURRENT_DATE
       AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
-    LIMIT 1
-  ", params = list(rv$login_id))
+    LIMIT 1",
+                              params = list(rv$login_id))
   
   industry <- if (nrow(user_industry) > 0 && !is.na(user_industry$industry[1])) {
     user_industry$industry[1]
@@ -325,8 +509,7 @@ observeEvent(input$add_competitor_btn, {
     NULL
   }
   
-  # CHANGED: pass industry
-  brand_result <- add_brand_for_user_pending(rv$login_id, brand_name, 
+  brand_result <- add_brand_for_user_pending(rv$login_id, brand_name,
                                              main_brand = FALSE,
                                              industry = industry)
   
@@ -340,70 +523,27 @@ observeEvent(input$add_competitor_btn, {
   updateTextInput(session, "add_competitor_brand_input", value = "")
   rv$brands_refresh <- rv$brands_refresh + 1
   
-  if (brand_result$needs_scoring) {
-    showNotification(paste0("\u2713 ", brand_name, " added! Scores calculating in background."),
-                     type = "message", duration = 5)
-    
-    brand_name_copy <- brand_name
-    brand_id_copy   <- brand_result$brand_id
-    login_id_copy   <- rv$login_id
-    
-    future_promise({
-      bg_con <- dbConnect(
-        RPostgres::Postgres(),
-        dbname = Sys.getenv("DB_NAME"), host = Sys.getenv("DB_HOST"),
-        port = Sys.getenv("DB_PORT"), user = Sys.getenv("DB_USER"),
-        password = Sys.getenv("DB_PASSWORD"))
-      on.exit(dbDisconnect(bg_con))
-      assign("con", bg_con, envir = globalenv())
-      
-      tryCatch({
-        # CHANGED: pass login_id
-        user_create_airr(brand_name_copy, login_id_copy)
-        
-        user_queries <- dbGetQuery(bg_con, "
-          SELECT dq.query_id, dq.query_string
-          FROM fact_user_queries_tracked uqt
-          JOIN dim_query dq ON dq.query_id = uqt.query_id
-          WHERE uqt.login_id = $1
-            AND uqt.date_valid_from <= CURRENT_DATE
-            AND (uqt.date_valid_to IS NULL OR uqt.date_valid_to >= CURRENT_DATE)",
-                                   params = list(login_id_copy))
-        
-        if (nrow(user_queries) > 0) {
-          for (q in seq_len(nrow(user_queries))) {
-            tryCatch({
-              create_prompt_airr(brand_id_copy, user_queries$query_string[q], 
-                                 user_queries$query_id[q])
-            }, error = function(e) {
-              warning(sprintf("Query score failed for query %d: %s", 
-                              user_queries$query_id[q], e$message))
-            })
-          }
-        }
-        
-        list(success = TRUE, brand = brand_name_copy)
-      }, error = function(e) {
-        list(success = FALSE, brand = brand_name_copy, error = e$message)
-      })
-    }) %...>% (function(result) {
-      if (result$success) {
-        showNotification(paste0("\u2713 Scores ready for ", result$brand, "!"),
-                         type = "message", duration = 5)
-      } else {
-        showNotification(paste0("\u26A0 Score calculation failed for ", result$brand),
-                         type = "warning", duration = 10)
-      }
-      rv$brands_refresh <- rv$brands_refresh + 1
-    }) %...!% (function(err) {
-      showNotification(paste0("\u26A0 Background error: ", err$message),
-                       type = "error", duration = 10)
-      rv$brands_refresh <- rv$brands_refresh + 1
-    })
+  # Get user's tracked prompts for the job payload
+  user_queries <- get_user_tracked_queries(rv$login_id)
+  prompt_map <- if (nrow(user_queries) > 0) {
+    setNames(as.list(user_queries$query_id), user_queries$query_string)
   } else {
-    showNotification(paste0("\u2713 ", brand_name, " added! Scores already available."),
-                     type = "message", duration = 3)
+    list()
   }
+  
+  # Insert job into queue
+  dbExecute(pool, "
+    INSERT INTO dim_job_queue (job_type, login_id, payload)
+    VALUES ('score_competitor', $1, $2)",
+            params = list(rv$login_id, toJSON(list(
+              brand_name = brand_name,
+              brand_id   = brand_result$brand_id,
+              prompts    = prompt_map
+            ), auto_unbox = TRUE)))
+  
+  showNotification(
+    paste0("\u2713 ", brand_name, " added! Scores calculating in background."),
+    type = "message", duration = 5)
   
   NULL
 })
@@ -448,53 +588,23 @@ observeEvent(input$add_query_btn, {
   updateTextInput(session, "add_query_input", value = "")
   rv$queries_refresh <- rv$queries_refresh + 1
   
-  showNotification(paste0("\u2713 Prompt added! Scores calculating in background."),
-                   type = "message", duration = 5)
+  # Get all user's brand IDs for the job payload
+  user_brands <- get_user_brands(rv$login_id)
+  brand_ids <- user_brands$brand_id
   
-  query_string_copy <- query_string
-  query_id_copy <- query_result$query_id
-  login_id_copy <- rv$login_id
+  # Insert job into queue
+  dbExecute(pool, "
+    INSERT INTO dim_job_queue (job_type, login_id, payload)
+    VALUES ('score_query', $1, $2)",
+            params = list(rv$login_id, toJSON(list(
+              query_string = query_string,
+              query_id     = query_result$query_id,
+              brand_ids    = brand_ids
+            ), auto_unbox = TRUE)))
   
-  future_promise({
-    bg_con <- dbConnect(
-      RPostgres::Postgres(),
-      dbname = Sys.getenv("DB_NAME"), host = Sys.getenv("DB_HOST"),
-      port = Sys.getenv("DB_PORT"), user = Sys.getenv("DB_USER"),
-      password = Sys.getenv("DB_PASSWORD"))
-    on.exit(dbDisconnect(bg_con))
-    assign("con", bg_con, envir = globalenv())
-    
-    tryCatch({
-      user_brands <- dbGetQuery(bg_con, "
-        SELECT b.brand_id
-        FROM fact_user_brands_tracked ubt
-        JOIN dim_brand b ON b.brand_id = ubt.brand_id
-        WHERE ubt.login_id = $1
-          AND ubt.date_valid_from <= CURRENT_DATE
-          AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)",
-                                params = list(login_id_copy))
-      
-      if (nrow(user_brands) > 0) {
-        create_prompt_airr_multiple(user_brands$brand_id, query_string_copy, query_id_copy)
-      }
-      
-      list(success = TRUE, query = query_string_copy)
-    }, error = function(e) {
-      list(success = FALSE, query = query_string_copy, error = e$message)
-    })
-  }) %...>% (function(result) {
-    if (result$success) {
-      showNotification(paste0("\u2713 Prompt scores ready!"), type = "message", duration = 5)
-    } else {
-      showNotification(paste0("\u26A0 Prompt scoring failed: ", result$error),
-                       type = "warning", duration = 10)
-    }
-    rv$queries_refresh <- rv$queries_refresh + 1
-  }) %...!% (function(err) {
-    showNotification(paste0("\u26A0 Background error: ", err$message),
-                     type = "error", duration = 10)
-    rv$queries_refresh <- rv$queries_refresh + 1
-  })
+  showNotification(
+    paste0("\u2713 Prompt added! Scores calculating in background."),
+    type = "message", duration = 5)
   
   NULL
 })
@@ -544,17 +654,19 @@ observeEvent(input$upgrade_btn, {
     div(
       style = "display: flex; gap: 15px;",
       
-      # Free
+      # Core
       div(
         style = "flex: 1; text-align: center; padding: 25px 15px; border: 2px solid #ecf0f1; 
                  border-radius: 12px;",
         div(style = "color: #95a5a6;", icon("seedling", class = "fa-2x")),
-        h4(style = "margin: 10px 0 0;", "Free"),
-        h3(style = "color: #27AE60; margin: 5px 0;", "$0"),
+        h4(style = "margin: 10px 0 0;", "Core"),
+        h3(style = "color: #27AE60; margin: 5px 0;", "TBD"),
         p(style = "color: #a0aec0; font-size: 12px;", "per month"),
         hr(style = "border-color: #f0f0f0;"),
         div(style = "font-size: 13px; text-align: left; padding: 0 10px;",
-            p("\u2713 1 competitor"), p("\u2713 1 tracked prompt"), p("\u2717 Priority processing"))
+            p("\u2713 1 competitor"),
+            p("\u2713 1 tracked prompt"),
+            p("\u2717 Priority processing"))
       ),
       
       # Pro
@@ -562,16 +674,20 @@ observeEvent(input$upgrade_btn, {
         style = "flex: 1; text-align: center; padding: 25px 15px; border: 2px solid #3498DB; 
                  border-radius: 12px; box-shadow: 0 4px 15px rgba(52,152,219,0.15);
                  position: relative;",
-        tags$span(style = "position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-                           background: #3498DB; color: white; font-size: 11px; font-weight: 600;
-                           padding: 3px 12px; border-radius: 20px;", "POPULAR"),
+        tags$span(
+          style = "position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+                   background: #3498DB; color: white; font-size: 11px; font-weight: 600;
+                   padding: 3px 12px; border-radius: 20px;",
+          "POPULAR"
+        ),
         div(style = "color: #3498DB;", icon("gem", class = "fa-2x")),
         h4(style = "margin: 10px 0 0;", "Pro"),
-        h3(style = "color: #3498DB; margin: 5px 0;", "$99"),
+        h3(style = "color: #3498DB; margin: 5px 0;", "TBD"),
         p(style = "color: #a0aec0; font-size: 12px;", "per month"),
         hr(style = "border-color: #f0f0f0;"),
         div(style = "font-size: 13px; text-align: left; padding: 0 10px;",
-            p(strong("\u2713 3 competitors")), p(strong("\u2713 5 tracked prompts")),
+            p(strong("\u2713 3 competitors")),
+            p(strong("\u2713 5 tracked prompts")),
             p("\u2713 Priority processing")),
         br(),
         actionButton("select_pro_btn", "Select Pro", class = "btn-primary",
@@ -584,18 +700,33 @@ observeEvent(input$upgrade_btn, {
                  border-radius: 12px;",
         div(style = "color: #F39C12;", icon("crown", class = "fa-2x")),
         h4(style = "margin: 10px 0 0;", "Enterprise"),
-        h3(style = "color: #F39C12; margin: 5px 0;", "$299"),
+        h3(style = "color: #F39C12; margin: 5px 0;", "TBD"),
         p(style = "color: #a0aec0; font-size: 12px;", "per month"),
         hr(style = "border-color: #f0f0f0;"),
         div(style = "font-size: 13px; text-align: left; padding: 0 10px;",
-            p(strong("\u2713 10 competitors")), p(strong("\u2713 20 tracked prompts")),
-            p("\u2713 Priority processing"), p(strong("\u2713 API access"))),
+            p(strong("\u2713 10 competitors")),
+            p(strong("\u2713 20 tracked prompts")),
+            p("\u2713 Priority processing"),
+            p(strong("\u2713 Customer Personas")),
+            p(strong("\u2713 API access"))),
         br(),
         actionButton("select_enterprise_btn", "Contact Sales", class = "btn-warning",
                      style = "width: 100%; border-radius: 8px;")
       )
     ),
+    
+    div(
+      style = "text-align: center; margin-top: 20px; padding: 12px;
+               background: #f8f9fa; border-radius: 8px;",
+      tags$span(
+        style = "font-size: 12px; color: #a0aec0;",
+        icon("info-circle", style = "margin-right: 4px;"),
+        "Pricing is being finalised. Get in touch to discuss early access rates."
+      )
+    ),
+    
     footer = modalButton("Close"),
     easyClose = TRUE
   ))
 })
+

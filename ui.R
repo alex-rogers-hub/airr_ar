@@ -11,6 +11,7 @@ source("ui_scripts/ui_profiles.R")
 
 ui <- dashboardPage(
   skin = "blue",
+  title = "AiRR",
   
   # Header
   dashboardHeader(
@@ -47,7 +48,7 @@ ui <- dashboardPage(
       id = "sidebar",
       menuItem("Brand Overview", tabName = "brand_overview", icon = icon("building")),
       menuItem("Prompt Overview", tabName = "prompt_overview", icon = icon("comment-dots")),
-      menuItem("Customer Profiles", tabName = "profiles", 
+      menuItem("Customer Personas", tabName = "profiles", 
                icon = icon("users"), 
                badgeLabel = "Enterprise", badgeColor = "purple"),
       # menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale")),
@@ -61,16 +62,101 @@ ui <- dashboardPage(
       tags$link(rel = "icon", type = "image/x-icon", href = "favicon.ico"),
       tags$link(rel = "shortcut icon", type = "image/x-icon", href = "favicon.ico"),
       tags$title("AiRR"),
-      tags$style(HTML(custom_css))
+      tags$style(HTML(custom_css)),
+      
+      tags$script(HTML("
+        $(document).ready(function() {
+      
+          // Create a single tooltip div appended to body
+          var $tip = $('<div class=\"airr-tooltip\"></div>').appendTo('body');
+      
+          $(document).on('mouseenter', '[data-tooltip]', function(e) {
+            var text = $(this).attr('data-tooltip');
+            if (!text) return;
+            $tip.text(text).show();
+            positionTip(e);
+          });
+      
+          $(document).on('mousemove', '[data-tooltip]', function(e) {
+            positionTip(e);
+          });
+      
+          $(document).on('mouseleave', '[data-tooltip]', function() {
+            $tip.hide();
+          });
+      
+          function positionTip(e) {
+            var tipW = $tip.outerWidth();
+            var tipH = $tip.outerHeight();
+            var x    = e.clientX - tipW / 2;
+            var y    = e.clientY + 18;
+      
+            // Keep within viewport horizontally
+            var maxX = $(window).width() - tipW - 8;
+            if (x < 8)    x = 8;
+            if (x > maxX) x = maxX;
+      
+            // Flip above cursor if too close to bottom
+            if (y + tipH > $(window).height() - 8) {
+              y = e.clientY - tipH - 10;
+            }
+      
+            $tip.css({ left: x, top: y });
+          }
+      
+        });
+      ")),
+      
+      # ── Enter key submits login / register forms ──────────────────────────
+      tags$script(HTML("
+        function submitLogin() {
+          // Force Shiny to flush current input values before clicking
+          var email = $('#login_email').val();
+          var password = $('#login_password').val();
+          Shiny.setInputValue('login_email', email, {priority: 'event'});
+          Shiny.setInputValue('login_password_val', password, {priority: 'event'});
+          setTimeout(function() {
+            $('#login_btn').click();
+          }, 50);
+        }
+        
+        function submitRegister() {
+          setTimeout(function() {
+            $('#register_btn').click();
+          }, 50);
+        }
+      
+        $(document).on('keypress', '#login_email', function(e) {
+          if (e.which == 13) {
+            e.preventDefault();
+            submitLogin();
+          }
+        });
+        $(document).on('keypress', '#login_password', function(e) {
+          if (e.which == 13) {
+            e.preventDefault();
+            submitLogin();
+          }
+        });
+        $(document).on('keypress', '#register_password_confirm', function(e) {
+          if (e.which == 13) {
+            e.preventDefault();
+            submitRegister();
+          }
+        });
+      "))
     ),
     
     useShinyjs(),
     
+    # Admin switcher bar — only renders for admin users
+    uiOutput("admin_switcher_ui"),
+    
     # ============================================
     # LOGIN / REGISTER
     # ============================================
-    conditionalPanel(
-      condition = "output.logged_in == false",
+    div(
+      id = "login_panel",
       div(
         class = "login-container",
         div(
@@ -110,9 +196,12 @@ ui <- dashboardPage(
       )
     ),
     
-    # ONBOARDING (logged in but not yet onboarded)
-    conditionalPanel(
-      condition = "output.logged_in == true && output.onboarding_complete == false",
+    # ============================================
+    # ONBOARDING
+    # ============================================
+    div(
+      id = "onboarding_panel",
+      style = "display: none;",   # hidden by default, shinyjs controls it
       div(
         style = "padding: 20px;",
         ui_onboarding()
@@ -120,10 +209,11 @@ ui <- dashboardPage(
     ),
     
     # ============================================
-    # MAIN APP (logged in + onboarded)
+    # MAIN APP
     # ============================================
-    conditionalPanel(
-      condition = "output.logged_in == true && output.onboarding_complete == true",
+    div(
+      id = "main_app_panel",
+      style = "display: none;",   # hidden by default, shinyjs controls it
       tabItems(
         tab_brand_overview,
         tab_prompt_overview,

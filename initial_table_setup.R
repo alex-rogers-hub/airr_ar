@@ -342,7 +342,7 @@ dbExecute(pool, "UPDATE fact_query_history       SET date = '2026-02-26' WHERE d
 
 # 
 # 
-# dim_customer <- dbGetQuery(con,'select * from dim_customer')
+# dim_customer <- dbGetQuery(pool,'select * from dim_customer')
 # 
 # # 
 # 
@@ -353,12 +353,15 @@ dbExecute(pool, "UPDATE fact_query_history       SET date = '2026-02-26' WHERE d
 # fact_persistence_history <- dbGetQuery(pool,'select * from fact_persistence_history')
 # fact_query_history <- dbGetQuery(pool,'select * from fact_query_history')
 # dim_user <- dbGetQuery(pool,'select * from dim_user')
+# dim_profile <- dbGetQuery(pool,'select * from dim_profile')
 # dim_brand <- dbGetQuery(pool,'select * from dim_brand')
 # dim_query <- dbGetQuery(pool,'select * from dim_query')
 # dim_subscription <- dbGetQuery(pool,'select * from dim_subscription')
 # fact_user_sub_level <- dbGetQuery(pool,'select * from fact_user_sub_level')
 # fact_user_brands_tracked <- dbGetQuery(pool,'select * from fact_user_brands_tracked')
 # fact_user_queries_tracked <- dbGetQuery(pool,'select * from fact_user_queries_tracked')
+# fact_profile_scores <- dbGetQuery(pool,'select * from fact_profile_scores')
+# dim_brand_query <- dbGetQuery(pool,'select * from dim_brand_query')
 
 
 query_history_export <- dbGetQuery(con, "

@@ -691,7 +691,6 @@ table.dataTable tbody tr:last-child td:last-child {
   font-weight: 600;
 }
 
-/* Disabled button and input styling */
 .btn-primary[disabled],
 .btn-primary.disabled {
   background: #cbd5e0 !important;
@@ -884,7 +883,6 @@ table.dataTable tbody tr:last-child td:last-child {
   cursor: default;
 }
 
-/* Style the selectInput inside the dark prompt strip */
 .prompt-strip-select .selectize-input {
   background: rgba(255,255,255,0.1) !important;
   border: 1px solid rgba(255,255,255,0.2) !important;
@@ -929,6 +927,106 @@ table.dataTable tbody tr:last-child td:last-child {
 .ai-generate-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4) !important;
+}
+
+.ldb-tooltip-anchor:hover .ldb-tooltip {
+  opacity: 1 !important;
+}
+
+body.admin-bar-visible .main-header {
+  top: 38px !important;
+}
+
+body.admin-bar-visible .main-header .navbar {
+  margin-top: 0 !important;
+}
+
+body.admin-bar-visible .main-sidebar {
+  padding-top: 88px !important; /* 38px admin bar + 50px normal header */
+}
+
+body.admin-bar-visible .content-wrapper,
+body.admin-bar-visible .right-side {
+  padding-top: 38px !important;
+}
+
+#admin_switcher_bar {
+  z-index: 10000 !important;
+}
+
+.main-header {
+  z-index: 9999 !important;
+}
+
+.score-card-mini {
+  cursor: default;
+}
+
+.airr-tooltip {
+  position: fixed;
+  background: #F5F5F5;
+  color: #1A1A1A;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  border: 1px solid #e2e8f0;
+  pointer-events: none;
+  z-index: 999999;
+  display: none;
+}
+
+.ldb-col-header {
+  flex: 0 0 52px;
+  text-align: center;
+  position: relative;
+  cursor: default;
+  padding-bottom: 8px;
+  border-bottom: 2px solid;
+}
+
+.ldb-col-header span {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.ldb-col-header::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #F5F5F5;
+  color: #1A1A1A;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  border: 1px solid #e2e8f0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 99999;
+}
+
+.ldb-col-header:hover::after {
+  opacity: 1;
+}
+
+/* ── Industry nudge pill on brand overview ─────────────────── */
+.industry-nudge-pill:hover {
+  background: rgba(231,76,60,0.18) !important;
+  border-color: rgba(231,76,60,0.5) !important;
+}
+
+.industry-nudge-pill:hover .industry-nudge-tooltip {
+  opacity: 1 !important;
 }
 
 ")

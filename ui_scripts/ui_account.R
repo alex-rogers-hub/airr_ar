@@ -11,6 +11,8 @@ tab_account <- tabItem(
   br(),
   
   fluidRow(
+    # Industry nudge — only visible when presence is near zero
+    uiOutput("account_industry_nudge"),
     box(
       title = NULL, width = 6,
       div(
@@ -27,6 +29,8 @@ tab_account <- tabItem(
                         actionButton("add_competitor_btn", "Add", icon = icon("plus"),
                                      class = "btn-primary", width = "100%")))
       ),
+      # Timing notice — appears as user types
+      uiOutput("account_competitor_timing_notice"),
       hr(style = "margin: 12px 0; border-color: #f0f0f0;"),
       uiOutput("account_competitor_list")
     ),
@@ -47,6 +51,8 @@ tab_account <- tabItem(
                         actionButton("add_query_btn", "Add", icon = icon("plus"),
                                      class = "btn-primary", width = "100%")))
       ),
+      # Timing notice — appears as user types
+      uiOutput("account_prompt_timing_notice"),
       hr(style = "margin: 12px 0; border-color: #f0f0f0;"),
       uiOutput("account_query_list")
     )

@@ -291,14 +291,58 @@ prompt_queries <- function(prompt_input,
 inject_near_me_location <- function(prompt_text,
                                     brand_reach    = "global",
                                     reach_country  = NULL,
+                                    reach_region   = NULL,
                                     reach_postcode = NULL) {
   
-  if (is.null(brand_reach) || brand_reach != "near_me") return(prompt_text)
+  if (is.null(brand_reach) || brand_reach == "global") return(prompt_text)
   
-  near_str <- build_near_me_suffix("near_me", reach_country, reach_postcode)
+  # Clean up NAs
+  if (!is.null(reach_country)  && is.na(reach_country))  reach_country  <- NULL
+  if (!is.null(reach_region)   && is.na(reach_region))   reach_region   <- NULL
+  if (!is.null(reach_postcode) && is.na(reach_postcode)) reach_postcode <- NULL
   
-  if (!nzchar(near_str)) return(prompt_text)
+  prefix <- switch(brand_reach,
+                   
+                   "national" = {
+                     if (!is.null(reach_country) && nzchar(reach_country)) {
+                       paste0("In ", reach_country, ", ")
+                     } else {
+                       ""
+                     }
+                   },
+                   
+                   "regional" = {
+                     if (!is.null(reach_region) && nzchar(reach_region)) {
+                       paste0("In ", reach_region, ", ")
+                     } else if (!is.null(reach_country) && nzchar(reach_country)) {
+                       paste0("In ", reach_country, ", ")
+                     } else {
+                       ""
+                     }
+                   },
+                   
+                   "near_me" = {
+                     # Original behaviour — replace "near me" in the text
+                     near_str <- build_near_me_suffix("near_me", reach_country, reach_postcode)
+                     if (nzchar(near_str)) {
+                       return(gsub("near me", near_str, prompt_text, ignore.case = TRUE))
+                     }
+                     return(prompt_text)
+                   },
+                   
+                   ""  # default — global, no prefix
+  )
   
-  # Replace "near me" (case-insensitive) with actual location
-  gsub("near me", near_str, prompt_text, ignore.case = TRUE)
+  # For national/regional — prepend the location prefix to the prompt
+  if (nzchar(prefix)) {
+    # Lowercase the first letter of the original prompt when prefixing
+    first_char <- substr(prompt_text, 1, 1)
+    rest       <- substr(prompt_text, 2, nchar(prompt_text))
+    paste0(prefix, tolower(first_char), rest)
+  } else {
+    prompt_text
+  }
 }
+
+
+

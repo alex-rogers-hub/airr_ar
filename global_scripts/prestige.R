@@ -130,21 +130,29 @@ find_all_mentions <- function(text, brand_patterns) {
 #' @param analyses Data frame with rank column
 #' @param num_competitors Integer number of competitors
 #' @return Numeric score 0-100
-calculate_competitive_rank_score <- function(rank,
-                                             num_competitors) {
+calculate_competitive_rank_score <- function(rank, num_competitors) {
   
-  if(rank == 0){
+  # Force to scalar — take first value if vector, default to 0 if NULL/NA
+  rank <- if (is.null(rank) || length(rank) == 0) 0 else rank[1]
+  rank <- if (is.na(rank)) 0 else rank
+  
+  num_competitors <- if (is.null(num_competitors) || length(num_competitors) == 0) {
+    0 
+  } else {
+    num_competitors[1]
+  }
+  
+  if (rank == 0) {
     score <- 0
   } else {
-    if(num_competitors > 0){
+    if (num_competitors > 0) {
       score <- max(0, min(100, 100 * (1 - (rank - 1) / num_competitors)))
     } else {
-      score <- 50  # Default
+      score <- 50
     }
   }
   return(score)
 }
-
 #' Calculate authority score with logarithmic scaling
 #' @param authority_results Tibble with weighted authority scores per run
 #' @return Numeric score 0-100
@@ -407,24 +415,18 @@ calculate_auth_and_lead <- function(brand_name,
 #' @param brand_name Name of the brand being scored
 #' @param response_data list containing output data from LLM responses
 #' @return List with rank, mentioned_brands, and rank_order
-calculate_competitive_rank <- function(brand_name,
-                                       response_data) {
+calculate_competitive_rank <- function(brand_name, response_data) {
   
   resp_data <- response_data
-  
   brands_to_compare <- c(brand_name, resp_data$competitor_summary$competitor)
   
-  # Find first mention for each brand
   mention_results <- map_dfc(seq_along(resp_data$comp_second_response_list), function(i) {
     mentions <- map_int(brands_to_compare, function(brand) {
       find_first_mention(resp_data$comp_second_response_list[[i]], brand)
     })
-    
-    # Return as named vector (becomes a column)
     tibble(!!paste0("response_", i) := mentions)
   })
   
-  # Add brand names as first column
   mention_results_tb <- tibble(brand = brands_to_compare) %>%
     bind_cols(mention_results) %>%
     mutate(
@@ -436,33 +438,32 @@ calculate_competitive_rank <- function(brand_name,
     ) %>%
     rowwise() %>%
     mutate(
-      avg_rank = mean(c_across(starts_with("rank_")), na.rm = TRUE),
+      avg_rank   = mean(c_across(starts_with("rank_")), na.rm = TRUE),
       times_ranked = sum(!is.na(c_across(starts_with("rank_"))))
     ) %>%
     ungroup() %>%
     arrange(avg_rank) %>%
     dplyr::filter(times_ranked > 5)
   
-  # Find target brand rank
   sorted_brands <- mention_results_tb %>%
     select(brand, avg_rank)
   
   brand_rank <- sorted_brands %>%
     filter(brand == brand_name)
   
-  if (nrow(brand_rank) == 0){
-    return(list(
-      rank = 0,
-      mentioned_brands = c(sorted_brands),
-      rank_order = c(sorted_brands)
-    ))
+  # FIX: ensure rank is always a single scalar
+  if (nrow(brand_rank) == 0) {
+    final_rank <- 0
   } else {
-    return(list(
-      rank = brand_rank %>% pull(avg_rank),
-      mentioned_brands = c(sorted_brands),
-      rank_order = c(sorted_brands)
-    ))
+    final_rank <- brand_rank$avg_rank[1]  # always take first row only
+    if (is.na(final_rank) || length(final_rank) == 0) final_rank <- 0
   }
+  
+  return(list(
+    rank             = final_rank,
+    mentioned_brands = sorted_brands,
+    rank_order       = sorted_brands
+  ))
 }
 
 #' Calculate prestige score directly from prompt texts
@@ -673,8 +674,9 @@ test_prestige_stability <- function(brand_name,
 #' @return List with prestige score and detailed metrics
 calculate_prestige_from_prompts_sep <- function(brand_name,
                                                 brand_id,
-                                                login_id,      # <-- NEW
+                                                login_id,
                                                 rel_responses,
+                                                db_con,                   # <-- added
                                                 context_window = 150,
                                                 model = "gpt-4o-mini",
                                                 temperature = 0.1) {
@@ -822,17 +824,21 @@ calculate_prestige_from_prompts_sep <- function(brand_name,
     # --- COMPETITIVE POSITIONING ---
     # Find other brands mentioned in the same response - pull competitors from history table
     
-    other_brands_df <- dbGetQuery(con,
+    other_brands_df <- dbGetQuery(db_con,
                                   "SELECT prestige_rank_comps_brands FROM fact_prestige_history
        WHERE brand_id = $1
          AND login_id = $2        -- NEW filter
          AND date = $3;",
                                   params = list(brand_id, login_id, Sys.Date()))
     
-    if(nrow(other_brands_df) == 0){
-      other_brands <- "NA"
+    if(is.null(other_brands_df) || nrow(other_brands_df) == 0 || 
+       is.na(other_brands_df$prestige_rank_comps_brands[1])){
+      other_brands <- character(0)
     } else {
-      other_brands <- str_split_1(other_brands_df$prestige_rank_comps_brands, " \\| ")
+      # Take only the first row to avoid vector length > 1
+      other_brands <- str_split_1(
+        other_brands_df$prestige_rank_comps_brands[1], " \\| "
+      )
     }
     
     # Find positions of other brands

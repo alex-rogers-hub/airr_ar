@@ -3,6 +3,11 @@ source("custom_css_stuff.R")
 
 server <- function(input, output, session) {
   
+  # Clean up when session ends
+  session$onSessionEnded(function() {
+    gc()  # force garbage collection when user leaves
+  })
+  
   # Reactive values
   rv <- reactiveValues(
     logged_in = FALSE,
@@ -14,7 +19,10 @@ server <- function(input, output, session) {
     auth_type = NULL,
     queries_refresh = 0,
     brands_refresh = 0,
-    onboarding_complete = FALSE
+    onboarding_complete = FALSE,
+    is_admin = FALSE,          # <-- new
+    admin_email = NULL,        # <-- new
+    admin_login_id = NULL      # <-- new
   )
   
   # Source server sub-scripts

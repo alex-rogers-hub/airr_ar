@@ -38,46 +38,43 @@ get_latest_score <- function(df, score_col) {
   return(as.numeric(df[[score_col]][latest_idx]))
 }
 
-addPrompt <- function(prompt_string, brand_id) {
-  con <- poolCheckout(pool)
+# Update addPrompt to use new con-explicit signature
+addPrompt <- function(prompt_string, brand_id, login_id) {
+  bg_con <- dbConnect(
+    RPostgres::Postgres(),
+    dbname   = Sys.getenv("DB_NAME"),
+    host     = Sys.getenv("DB_HOST"),
+    port     = Sys.getenv("DB_PORT"),
+    user     = Sys.getenv("DB_USER"),
+    password = Sys.getenv("DB_PASSWORD")
+  )
+  on.exit(dbDisconnect(bg_con), add = TRUE)
   
   tryCatch({
-    # Insert query and get ID
-    query <- "INSERT INTO dim_query (query_string) 
-              VALUES ($1) 
-              RETURNING query_id"
+    existing_q <- dbGetQuery(pool,
+                             "SELECT query_id FROM dim_query WHERE query_string = $1",
+                             params = list(prompt_string))
     
-    result <- dbGetQuery(con, query, params = list(prompt_string))
+    if (nrow(existing_q) == 0) {
+      existing_q <- dbGetQuery(pool,
+                               "INSERT INTO dim_query (query_string) VALUES ($1) RETURNING query_id",
+                               params = list(prompt_string))
+    }
+    query_id <- existing_q$query_id[1]
     
-    # Insert into junction table
-    dbExecute(con, "
-      INSERT INTO dim_brand_query (
-        brand_id,
-        query_id,
-        date_added
-      ) VALUES ($1, $2, $3)
-      ON CONFLICT (brand_id, query_id)
-      DO UPDATE SET
-        date_added = EXCLUDED.date_added
-    ", params = list(
-      brand_id,
-      result$query_id,
-      Sys.Date()
-    ))
+    dbExecute(pool, "
+      INSERT INTO dim_brand_query (brand_id, query_id, date_added)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (brand_id, query_id) DO UPDATE SET date_added = EXCLUDED.date_added",
+              params = list(brand_id, query_id, Sys.Date()))
     
-    # Calculate the score for this prompt
-    create_prompt_airr(brand_id,
-                       prompt_string,
-                       result$query_id)
+    create_prompt_airr(bg_con, brand_id, prompt_string, query_id, login_id)
     
-    return(result$query_id)
+    return(query_id)
     
   }, error = function(e) {
     warning(paste("Error in addPrompt:", e$message))
     return(NULL)
-    
-  }, finally = {
-    poolReturn(con)
   })
 }
 
@@ -132,10 +129,13 @@ get_latest_query_scores <- function(query_id, brand_id) {
 
 addPromptForEveryone <- function(prompt_string) {
   cat("=== Starting addPromptForEveryone ===\n")
+  con_tx <- NULL
   
   tryCatch({
-    
     cat("Step 1: Getting brands\n")
+    con_tx <- poolCheckout(pool)
+    dbBegin(con_tx)
+    
     all_brands <- dbGetQuery(
       pool,
       "SELECT DISTINCT brand_id FROM dim_brand"
@@ -143,8 +143,6 @@ addPromptForEveryone <- function(prompt_string) {
     cat("Found", length(all_brands), "brands\n")
     
     cat("Step 2: Starting transaction\n")
-    con_tx <- poolCheckout(pool)
-    dbBegin(con_tx)
     
     cat("Step 3: Inserting query\n")
     query <- "INSERT INTO dim_query (query_string) 
@@ -194,18 +192,17 @@ addPromptForEveryone <- function(prompt_string) {
     
     cat("=== addPromptForEveryone completed successfully ===\n")
     return(query_id)
+    dbCommit(con_tx)
+    poolReturn(con_tx)
+    con_tx <- NULL  # mark as returned
     
   }, error = function(e) {
-    cat("=== ERROR in addPromptForEveryone ===\n")
-    cat("Error message:", e$message, "\n")
-    
     tryCatch({
-      dbRollback(con_tx)
-      poolReturn(con_tx)
-    }, error = function(e2) {
-      cat("Could not rollback:", e2$message, "\n")
-    })
-    
+      if (!is.null(con_tx)) {
+        dbRollback(con_tx)
+        poolReturn(con_tx)
+      }
+    }, error = function(e2) invisible(NULL))
     stop(e)
   })
 }
@@ -703,4 +700,356 @@ sanitise_text <- function(text) {
   text <- trimws(text)
   
   return(text)
+}
+
+# ============================================
+# Subscription helpers
+# ============================================
+
+#' Upsert an Enterprise subscription for a user
+#' Safe to call on every login — only inserts if none exists
+ensure_enterprise_subscription <- function(login_id) {
+  tryCatch({
+    
+    # Get Enterprise subscription_level_id
+    ent <- dbGetQuery(pool,
+                      "SELECT subscription_level_id 
+       FROM dim_subscription 
+       WHERE subscription_name = 'Enterprise'
+       LIMIT 1")
+    
+    if (nrow(ent) == 0) {
+      warning("Enterprise subscription tier not found in dim_subscription")
+      return(invisible(FALSE))
+    }
+    
+    ent_id <- ent$subscription_level_id[1]
+    
+    # Close off any existing active subscriptions that aren't Enterprise
+    dbExecute(pool,
+              "UPDATE fact_user_sub_level
+       SET date_valid_to = CURRENT_DATE - 1
+       WHERE login_id = $1
+         AND subscription_level_id != $2
+         AND date_valid_to >= CURRENT_DATE",
+              params = list(login_id, ent_id))
+    
+    # Insert Enterprise if not already active
+    dbExecute(pool,
+              "INSERT INTO fact_user_sub_level
+         (login_id, subscription_level_id, date_valid_from, date_valid_to)
+       VALUES ($1, $2, CURRENT_DATE, '2099-12-31')
+       ON CONFLICT DO NOTHING",
+              params = list(login_id, ent_id))
+    
+    return(invisible(TRUE))
+    
+  }, error = function(e) {
+    warning(paste("ensure_enterprise_subscription failed:", e$message))
+    return(invisible(FALSE))
+  })
+}
+
+
+estimate_setup_time <- function(n_competitors, n_prompts, n_personas) {
+  
+  n_brands <- n_competitors + 1  # +1 for main brand
+  
+  # Brand scoring (sequential, ~90s each)
+  brand_time <- n_brands * 90
+  
+  # Prompt scoring (~15s per brand per prompt, but batched per prompt)
+  prompt_time <- n_prompts * n_brands * 15
+  
+  # Persona scoring (~30s per brand per persona for brand-level)
+  persona_brand_time <- n_personas * n_brands * 30
+  
+  # Persona prompt scoring (~15s per brand per prompt per persona)
+  persona_prompt_time <- n_personas * n_prompts * n_brands * 15
+  
+  total_seconds <- brand_time + prompt_time + persona_brand_time + persona_prompt_time
+  
+  # Format nicely
+  if (total_seconds < 120) {
+    time_str <- paste0("about ", round(total_seconds / 60), " minute")
+  } else if (total_seconds < 3600) {
+    mins <- round(total_seconds / 60)
+    time_str <- paste0("about ", mins, " minutes")
+  } else {
+    hours <- floor(total_seconds / 3600)
+    mins  <- round((total_seconds %% 3600) / 60)
+    time_str <- paste0("about ", hours, "h ", mins, "m")
+  }
+  
+  list(
+    total_seconds      = total_seconds,
+    time_str           = time_str,
+    brand_seconds      = brand_time,
+    prompt_seconds     = prompt_time,
+    persona_seconds    = persona_brand_time + persona_prompt_time
+  )
+}
+
+# ============================================
+# Timing notice helpers — for post-onboarding additions
+# ============================================
+
+#' Estimate time to score a single new competitor brand
+#' (brand scoring + all existing prompts + all existing personas)
+estimate_competitor_add_time <- function(login_id) {
+  n_prompts  <- get_user_query_count(login_id)
+  
+  # Count active personas
+  n_personas <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT COUNT(*) as cnt
+      FROM fact_user_profiles_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)
+    ", params = list(login_id))$cnt
+  }, error = function(e) 0)
+  
+  # 1 new brand
+  brand_time         <- 90
+  # Each prompt needs scoring for the new brand
+  prompt_time        <- n_prompts * 15
+  # Each persona needs brand-level + prompt-level scoring for new brand
+  persona_brand_time <- n_personas * 30
+  persona_prompt_time <- n_personas * n_prompts * 15
+  
+  total_seconds <- brand_time + prompt_time + persona_brand_time + persona_prompt_time
+  
+  list(
+    total_seconds = total_seconds,
+    time_str      = format_seconds_to_str(total_seconds),
+    breakdown     = list(
+      brand   = brand_time,
+      prompts = prompt_time,
+      persona = persona_brand_time + persona_prompt_time
+    )
+  )
+}
+
+#' Estimate time to score a single new prompt
+#' (all existing brands + all existing personas × all existing brands)
+estimate_prompt_add_time <- function(login_id) {
+  n_brands <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT COUNT(*) as cnt
+      FROM fact_user_brands_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)
+    ", params = list(login_id))$cnt
+  }, error = function(e) 1)
+  
+  n_personas <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT COUNT(*) as cnt
+      FROM fact_user_profiles_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)
+    ", params = list(login_id))$cnt
+  }, error = function(e) 0)
+  
+  # 1 new prompt × all brands
+  prompt_time         <- n_brands * 15
+  # Each persona needs this prompt scored for each brand
+  persona_prompt_time <- n_personas * n_brands * 15
+  
+  total_seconds <- prompt_time + persona_prompt_time
+  
+  list(
+    total_seconds = total_seconds,
+    time_str      = format_seconds_to_str(total_seconds),
+    breakdown     = list(
+      brands  = prompt_time,
+      persona = persona_prompt_time
+    )
+  )
+}
+
+#' Estimate time to score a single new persona
+#' (all existing brands + all existing prompts × all existing brands)
+estimate_persona_add_time <- function(login_id) {
+  n_brands <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT COUNT(*) as cnt
+      FROM fact_user_brands_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)
+    ", params = list(login_id))$cnt
+  }, error = function(e) 1)
+  
+  n_prompts <- get_user_query_count(login_id)
+  
+  # Brand-level scoring for each brand
+  persona_brand_time  <- n_brands * 30
+  # Prompt-level scoring for each brand × each prompt
+  persona_prompt_time <- n_brands * n_prompts * 15
+  
+  total_seconds <- persona_brand_time + persona_prompt_time
+  
+  list(
+    total_seconds = total_seconds,
+    time_str      = format_seconds_to_str(total_seconds),
+    breakdown     = list(
+      brands  = persona_brand_time,
+      prompts = persona_prompt_time
+    )
+  )
+}
+
+#' Format seconds into a human-readable string
+format_seconds_to_str <- function(total_seconds) {
+  if (total_seconds < 60) {
+    "under a minute"
+  } else if (total_seconds < 120) {
+    "about 1 minute"
+  } else if (total_seconds < 3600) {
+    paste0("about ", round(total_seconds / 60), " minutes")
+  } else {
+    hours <- floor(total_seconds / 3600)
+    mins  <- round((total_seconds %% 3600) / 60)
+    if (mins == 0) {
+      paste0("about ", hours, "h")
+    } else {
+      paste0("about ", hours, "h ", mins, "m")
+    }
+  }
+}
+
+#' Render a timing notice div
+#' @param time_str  Character — formatted time string from estimate_*_add_time()
+#' @param breakdown Named list with per-step seconds (optional, NULL to hide)
+#' @param item_label Character — "competitor", "prompt", or "persona"
+render_timing_notice <- function(time_str, breakdown = NULL, item_label = "item") {
+  
+  detail_rows <- if (!is.null(breakdown)) {
+    tagList(
+      lapply(names(breakdown), function(key) {
+        secs <- breakdown[[key]]
+        if (secs == 0) return(NULL)
+        div(
+          style = "display: flex; justify-content: space-between;
+                   font-size: 11px; color: #718096; margin-top: 3px;",
+          tags$span(paste0("Scoring across ", key)),
+          tags$span(paste0("~", round(secs / 60), " min"))
+        )
+      })
+    )
+  } else NULL
+  
+  div(
+    style = "background: rgba(102,126,234,0.06);
+             border: 1px solid rgba(102,126,234,0.2);
+             border-radius: 8px; padding: 10px 14px; margin-top: 10px;",
+    div(
+      style = "display: flex; align-items: center; gap: 7px;",
+      icon("clock", style = "color: #667eea; font-size: 13px; flex-shrink: 0;"),
+      tags$span(
+        style = "font-size: 13px; font-weight: 600; color: #2d3748;",
+        paste0("Scores will be ready in ", time_str)
+      )
+    ),
+    if (!is.null(detail_rows)) {
+      div(style = "margin-top: 6px;", detail_rows)
+    },
+    div(
+      style = "margin-top: 7px; font-size: 11px; color: #a0aec0;",
+      icon("info-circle", style = "margin-right: 3px;"),
+      paste0(
+        "Your new ", item_label, " will be scored in the background. ",
+        "Results appear automatically — no need to stay on this page."
+      )
+    )
+  )
+}
+
+#' Update industry for a user-brand pairing
+update_user_brand_industry <- function(login_id, industry) {
+  tryCatch({
+    
+    # Update all active user-brand rows for this user
+    dbExecute(pool, "
+      UPDATE fact_user_brands_tracked
+      SET industry = $1
+      WHERE login_id = $2
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+              params = list(industry, login_id))
+    
+    # Update dim_brand for all brands this user tracks
+    brand_ids <- dbGetQuery(pool, "
+      SELECT DISTINCT brand_id
+      FROM fact_user_brands_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+                            params = list(login_id))$brand_id
+    
+    if (length(brand_ids) > 0) {
+      placeholders <- paste0("$", seq_along(brand_ids) + 1, collapse = ", ")
+      dbExecute(pool,
+                sprintf("UPDATE dim_brand SET industry = $1 WHERE brand_id IN (%s)",
+                        placeholders),
+                params = as.list(c(industry, brand_ids)))
+    }
+    
+    return(list(success = TRUE, brand_ids = brand_ids))
+    
+  }, error = function(e) {
+    warning(paste("Error updating industry:", e$message))
+    return(list(success = FALSE, brand_ids = c()))
+  })
+}
+
+#' Estimate time to rescore all brands for a user
+#' (same as full setup minus onboarding overhead)
+estimate_rescore_time <- function(login_id) {
+  
+  n_brands <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT COUNT(*) as cnt
+      FROM fact_user_brands_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+               params = list(login_id))$cnt
+  }, error = function(e) 1)
+  
+  n_prompts <- get_user_query_count(login_id)
+  
+  n_personas <- tryCatch({
+    dbGetQuery(pool, "
+      SELECT COUNT(*) as cnt
+      FROM fact_user_profiles_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+               params = list(login_id))$cnt
+  }, error = function(e) 0)
+  
+  brand_time          <- n_brands * 90
+  prompt_time         <- n_prompts * n_brands * 15
+  persona_brand_time  <- n_personas * n_brands * 30
+  persona_prompt_time <- n_personas * n_prompts * n_brands * 15
+  
+  total_seconds <- brand_time + prompt_time + persona_brand_time + persona_prompt_time
+  
+  list(
+    total_seconds = total_seconds,
+    time_str      = format_seconds_to_str(total_seconds),
+    n_brands      = n_brands,
+    n_prompts     = n_prompts,
+    n_personas    = n_personas,
+    breakdown     = list(
+      brands  = brand_time,
+      prompts = prompt_time,
+      persona = persona_brand_time + persona_prompt_time
+    )
+  )
 }

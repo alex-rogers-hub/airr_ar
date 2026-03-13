@@ -25,6 +25,18 @@ library(rmarkdown)
 library(knitr)
 library(base64enc)
 library(later)
+library(future.apply)
+
+# plan(multisession)
+# plan(multisession, workers = 2)
+# cat("=== Future plan set ===\n")
+# cat("Workers:", nbrOfWorkers(), "\n")
+
+# Reduce memory usage
+options(future.globals.maxSize = 200 * 1024^2)  # 200MB max for futures
+
+# Garbage collect aggressively
+options(shiny.maxRequestSize = 10 * 1024^2)  # 10MB max upload size
 
 # ============================================
 # Brand Theme (change these to update all colours)
@@ -76,9 +88,26 @@ BRAND_THEME <- list(
   gradient_header = "linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%)"
 )
 
-setwd('/home/aarogers/AiRR')
-# setwd('/srv/shiny-server/AiRR')
+possible_paths <- c(
+  "/home/aarogers/airr",        # compute server (daily runs)
+  "/srv/shiny-server/AiRR",     # web server (production Shiny)
+  "/home/aarogers/AiRR"         # web server (RStudio dev)
+)
+
+# Set to the first path that actually exists
+for (path in possible_paths) {
+  if (dir.exists(path)) {
+    setwd(path)
+    cat("Working directory set to:", path, "\n")
+    break
+  }
+}
+
+cat("Current working directory:", getwd(), "\n")
+
 print(getwd())
+# setwd("/home/aarogers/AiRR")
+
 # Color palette
 app_colors <- list(
   primary = "#2C3E50",
@@ -122,7 +151,9 @@ pool <- dbPool(
   host = Sys.getenv("DB_HOST"),
   port = Sys.getenv("DB_PORT"),
   user = Sys.getenv("DB_USER"),
-  password = Sys.getenv("DB_PASSWORD")
+  password = Sys.getenv("DB_PASSWORD"),
+  # Connection-level statement timeout — kills any query running > 30s
+  options  = "-c statement_timeout=30000"
 )
 
 onStop(function() {

@@ -305,3 +305,140 @@ dbExecute(pool, "
   SET email = 'ua@ua.com' 
   WHERE email = 'ue@ue.com';
 ")
+
+# -- Add reach/region columns to dim_brand
+dbExecute(pool, "
+ALTER TABLE dim_brand 
+ADD COLUMN IF NOT EXISTS brand_reach VARCHAR(20) DEFAULT 'global',
+ADD COLUMN IF NOT EXISTS reach_country VARCHAR(100),
+ADD COLUMN IF NOT EXISTS reach_region VARCHAR(200),
+ADD COLUMN IF NOT EXISTS industry VARCHAR(200);")
+
+# -- Add onboarding_complete flag to dim_user
+dbExecute(pool, "
+ALTER TABLE dim_user
+ADD COLUMN IF NOT EXISTS onboarding_complete BOOLEAN DEFAULT FALSE;")
+
+dbExecute(pool, "
+ALTER TABLE dim_brand
+ADD COLUMN IF NOT EXISTS reach_postcode VARCHAR(20);")
+
+
+# -- Profiles table
+dbExecute(pool, "
+CREATE TABLE IF NOT EXISTS dim_customer_profile (
+  profile_id        SERIAL PRIMARY KEY,
+  profile_name      VARCHAR(100) NOT NULL,
+  profile_descriptor TEXT NOT NULL,
+  is_standard       BOOLEAN DEFAULT TRUE,
+  created_by_login  INTEGER REFERENCES dim_user(login_id),
+  date_created      DATE DEFAULT CURRENT_DATE
+);")
+
+# -- Link profiles to users
+dbExecute(pool, "
+CREATE TABLE IF NOT EXISTS fact_user_profiles_tracked (
+  login_id          INTEGER REFERENCES dim_user(login_id),
+  profile_id        INTEGER REFERENCES dim_customer_profile(profile_id),
+  date_valid_from   DATE NOT NULL DEFAULT CURRENT_DATE,
+  date_valid_to     DATE,
+  PRIMARY KEY (login_id, profile_id, date_valid_from)
+);")
+
+# -- Profile scores for brand-level
+dbExecute(pool, "
+CREATE TABLE IF NOT EXISTS fact_profile_brand_history (
+  profile_id        INTEGER REFERENCES dim_customer_profile(profile_id),
+  brand_id          INTEGER REFERENCES dim_brand(brand_id),
+  date              DATE NOT NULL,
+  presence_score    NUMERIC(6,2),
+  perception_score  NUMERIC(6,2),
+  prestige_score    NUMERIC(6,2),
+  persistence_score NUMERIC(6,2),
+  airr_score        NUMERIC(6,2),
+  PRIMARY KEY (profile_id, brand_id, date)
+);")
+
+# -- Profile scores for prompt-level
+dbExecute(pool, "
+CREATE TABLE IF NOT EXISTS fact_profile_query_history (
+  profile_id        INTEGER REFERENCES dim_customer_profile(profile_id),
+  brand_id          INTEGER REFERENCES dim_brand(brand_id),
+  query_id          INTEGER REFERENCES dim_query(query_id),
+  date              DATE NOT NULL,
+  presence_score    NUMERIC(6,2),
+  perception_score  NUMERIC(6,2),
+  prestige_score    NUMERIC(6,2),
+  persistence_score NUMERIC(6,2),
+  airr_score        NUMERIC(6,2),
+  PRIMARY KEY (profile_id, brand_id, query_id, date)
+);")
+
+# -- Insert standard profiles
+dbExecute(pool, "
+INSERT INTO dim_customer_profile (profile_name, profile_descriptor, is_standard) VALUES
+('Athletic & Active',    'I am an active person aged 18-35 who exercises at least 4 times per week. I am health-conscious with a mid-to-high income and tend to prioritise performance and quality', TRUE),
+('Young Professional',   'I am an urban professional aged 22-32 with a college degree earning between $45,000 and $80,000 per year. I am career focused and either single or newly in a relationship', TRUE),
+('Family Focused',       'I am a married parent aged 30-45 with two or more children. My household income is between $60,000 and $100,000 per year and I live in the suburbs and prioritise value for money', TRUE),
+('Budget Conscious',     'I am a price-sensitive shopper with a household income under $40,000 per year. I always look for the best deal and prioritise affordability over brand prestige', TRUE),
+('Luxury Seeker',        'I am a high earner aged 30-55 with a household income over $150,000 per year. I am brand conscious and always prioritise quality and prestige over price', TRUE),
+('Tech Enthusiast',      'I am typically male aged 18-40 and an early adopter of new technology. I have a mid-to-high income and prefer to shop online and research products thoroughly before buying', TRUE),
+('Senior',               'I am aged 55 or over and either retired or approaching retirement. I am on a fixed or pension income, tend to be brand loyal and am increasingly health conscious', TRUE),
+('Student',              'I am aged 18-24 and currently in higher education. My income is under $25,000 per year. I am trend aware but highly price sensitive and often shop online', TRUE),
+('Small Business Owner', 'I am self-employed and aged between 28 and 50. My income is variable and I am often time poor. I tend to focus on return on investment and practical value', TRUE),
+('Health & Wellness',    'I prioritise health and wellness in all purchasing decisions. I prefer organic and natural products, am willing to pay a premium for quality and am conscious of my diet and fitness', TRUE),
+('Eco Conscious',        'I am aged 20-40 and environmentally motivated. I will actively choose and pay more for sustainable and ethical brands and am very aware of environmental impact', TRUE),
+('Urban Millennial',     'I am a city dweller aged 25-38 who rents rather than owns. My income is between $50,000 and $90,000 per year and I tend to prioritise experiences over possessions', TRUE),
+('Suburban Parent',      'I am a homeowner aged 32-48 with children in school. I own two cars and my household income is between $75,000 and $130,000 per year. Convenience and family value are important to me', TRUE),
+('High Earner',          'I have a household income over $200,000 per year and am aged 35-55. I am status conscious, time poor and willing to pay significantly more for the best quality and service', TRUE),
+('Retiree',              'I am aged 62 or over and living on pension or savings income. I am health focused, brand loyal and tend to research purchases carefully before committing', TRUE)
+ON CONFLICT DO NOTHING;")
+
+
+
+dbExecute(pool, "
+ALTER TABLE fact_user_brands_tracked
+  ADD COLUMN IF NOT EXISTS industry TEXT;")
+
+
+
+dbExecute(pool, "ALTER TABLE fact_presence_history    ADD COLUMN IF NOT EXISTS login_id INTEGER REFERENCES dim_user(login_id);")
+dbExecute(pool, "ALTER TABLE fact_perception_history  ADD COLUMN IF NOT EXISTS login_id INTEGER REFERENCES dim_user(login_id);")
+dbExecute(pool, "ALTER TABLE fact_prestige_history    ADD COLUMN IF NOT EXISTS login_id INTEGER REFERENCES dim_user(login_id);")
+dbExecute(pool, "ALTER TABLE fact_persistence_history ADD COLUMN IF NOT EXISTS login_id INTEGER REFERENCES dim_user(login_id);")
+dbExecute(pool, "ALTER TABLE fact_airr_history        ADD COLUMN IF NOT EXISTS login_id INTEGER REFERENCES dim_user(login_id);")
+
+# -- Drop old unique constraints and add new composite ones
+# -- (adjust constraint names to match your actual schema)
+
+# -- fact_presence_history
+dbExecute(pool, "ALTER TABLE fact_presence_history
+DROP CONSTRAINT IF EXISTS fact_presence_history_brand_id_date_key;")
+dbExecute(pool, "ALTER TABLE fact_presence_history
+ADD CONSTRAINT fact_presence_history_brand_login_date_key 
+UNIQUE (brand_id, login_id, date);")
+
+# -- Repeat for the other tables:
+dbExecute(pool, "  ALTER TABLE fact_perception_history
+DROP CONSTRAINT IF EXISTS fact_perception_history_brand_id_date_key;")
+dbExecute(pool, "ALTER TABLE fact_perception_history
+ADD CONSTRAINT fact_perception_history_brand_login_date_key
+UNIQUE (brand_id, login_id, date);")
+
+dbExecute(pool, "ALTER TABLE fact_prestige_history
+DROP CONSTRAINT IF EXISTS fact_prestige_history_brand_id_date_key;")
+dbExecute(pool, "ALTER TABLE fact_prestige_history
+ADD CONSTRAINT fact_prestige_history_brand_login_date_key
+UNIQUE (brand_id, login_id, date);")
+
+dbExecute(pool, "ALTER TABLE fact_persistence_history
+DROP CONSTRAINT IF EXISTS fact_persistence_history_brand_id_date_key;")
+dbExecute(pool, "ALTER TABLE fact_persistence_history
+ADD CONSTRAINT fact_persistence_history_brand_login_date_key
+UNIQUE (brand_id, login_id, date);")
+
+dbExecute(pool, "ALTER TABLE fact_airr_history
+DROP CONSTRAINT IF EXISTS fact_airr_history_brand_id_date_key;")
+dbExecute(pool, "ALTER TABLE fact_airr_history
+ADD CONSTRAINT fact_airr_history_brand_login_date_key
+UNIQUE (brand_id, login_id, date);")

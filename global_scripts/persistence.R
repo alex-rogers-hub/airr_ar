@@ -94,7 +94,7 @@ calculate_persistence_score <- function(brand_name,
 # Main Interface Function -------------------------------------------------
 
 # CHANGED: added login_id parameter; queries filter by it
-calculate_daily_persistence <- function(brand_name, login_id, run_date) {
+calculate_daily_persistence <- function(brand_name, login_id, run_date, con) {
   
   brand_id <- dbGetQuery(con,
                          "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1);",

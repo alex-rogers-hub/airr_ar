@@ -1,4 +1,16 @@
+
+setwd("/home/aarogers/airr")
 source("global.R")
+
+# Create connection
+con <- dbConnect(
+  RPostgres::Postgres(),
+  dbname = Sys.getenv("DB_NAME"),
+  host = Sys.getenv("DB_HOST"),
+  port = Sys.getenv("DB_PORT"),
+  user = Sys.getenv("DB_USER"),
+  password = Sys.getenv("DB_PASSWORD")
+)
 
 # running the below runs by default in "gpt-4o-mini". Add "gpt-4o" or other model name to change this
 # daily_refresh_loop(model = "gpt-4.1-mini")

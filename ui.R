@@ -44,16 +44,67 @@ ui <- dashboardPage(
   # Sidebar
   dashboardSidebar(
     useShinyjs(),
+    
     sidebarMenu(
       id = "sidebar",
-      menuItem("Brand Overview", tabName = "brand_overview", icon = icon("building")),
-      menuItem("Prompt Overview", tabName = "prompt_overview", icon = icon("comment-dots")),
-      menuItem("Customer Personas", tabName = "profiles", 
-               icon = icon("users"), 
+      menuItem("Brand Overview",    tabName = "brand_overview",  icon = icon("building")),
+      menuItem("Prompt Overview",   tabName = "prompt_overview", icon = icon("comment-dots")),
+      menuItem("Customer Personas", tabName = "profiles",
+               icon = icon("users"),
                badgeLabel = "Enterprise", badgeColor = "purple"),
-      # menuItem("Comparisons", tabName = "comparisons", icon = icon("balance-scale")),
-      menuItem("Account", tabName = "account", icon = icon("user-cog"))
-    )
+      menuItem("Account",           tabName = "account",         icon = icon("user-cog"))
+    ),
+    
+    # Persistent brand card
+    uiOutput("sidebar_brand_card"),
+    
+    # Sticky scores — slides in when score cards scroll out of view
+    div(
+      id = "sidebar_sticky_scores",
+      style = "overflow: hidden; max-height: 0; transition: max-height 0.3s ease;
+             margin: 0 12px;",
+      uiOutput("sticky_score_bar_ui")
+    ),
+    
+    # Scroll watcher
+    tags$script(HTML("
+    (function() {
+      var sidebar_scores = document.getElementById('sidebar_sticky_scores');
+      if (!sidebar_scores) return;
+
+      function attachObserver() {
+        var sentinel = document.getElementById('score_cards_sentinel');
+        if (!sentinel) {
+          setTimeout(attachObserver, 500);
+          return;
+        }
+
+        var observer = new IntersectionObserver(function(entries) {
+          entries.forEach(function(entry) {
+            if (entry.isIntersecting) {
+              // Cards visible — collapse sidebar scores
+              sidebar_scores.style.maxHeight = '0';
+            } else {
+              // Cards off screen — expand sidebar scores
+              sidebar_scores.style.maxHeight = '300px';
+            }
+          });
+        }, {
+          root: null,
+          threshold: 0,
+          rootMargin: '-60px 0px 0px 0px'
+        });
+
+        observer.observe(sentinel);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attachObserver);
+      } else {
+        attachObserver();
+      }
+    })();
+  "))
   ),
   
   # Body

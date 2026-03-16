@@ -271,57 +271,109 @@ output$dash_score_cards_row <- renderUI({
                   }, error = function(e) FALSE)
                   
                   if (has_zero_presence) {
+                    
+                    # Fetch reach payload for the pill buttons
+                    reach_info <- tryCatch(
+                      dbGetQuery(pool, "
+      SELECT b.brand_id, b.brand_name, b.brand_reach, b.reach_country,
+             b.reach_region, b.reach_postcode, ubt.industry
+      FROM fact_user_brands_tracked ubt
+      JOIN dim_brand b ON b.brand_id = ubt.brand_id
+      WHERE ubt.login_id = $1
+        AND ubt.main_brand_flag = TRUE
+        AND ubt.date_valid_from <= CURRENT_DATE
+        AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+      LIMIT 1",
+                                 params = list(rv$login_id)),
+                      error = function(e) NULL
+                    )
+                    
+                    industry_payload_pill <- if (!is.null(reach_info) && nrow(reach_info) > 0) {
+                      jsonlite::toJSON(list(
+                        brand_id   = reach_info$brand_id[1],
+                        brand_name = reach_info$brand_name[1],
+                        industry   = reach_info$industry[1] %||% ""
+                      ), auto_unbox = TRUE)
+                    } else NULL
+                    
+                    reach_payload_pill <- if (!is.null(reach_info) && nrow(reach_info) > 0) {
+                      jsonlite::toJSON(list(
+                        brand_reach    = reach_info$brand_reach[1]    %||% "global",
+                        reach_country  = reach_info$reach_country[1]  %||% "",
+                        reach_region   = reach_info$reach_region[1]   %||% "",
+                        reach_postcode = reach_info$reach_postcode[1] %||% ""
+                      ), auto_unbox = TRUE)
+                    } else NULL
+                    
                     div(
                       style = "margin-top: 6px;",
                       
-                      # Clickable pill — navigates to account tab
-                      tags$div(
+                      # Clickable pill
+                      div(
                         style = "display: inline-flex; align-items: center; gap: 5px;
-                     background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3);
-                     border-radius: 20px; padding: 3px 10px; cursor: pointer;
-                     transition: all 0.15s ease; position: relative;",
-                        class  = "industry-nudge-pill",
-                        
-                        # Navigate to account on click
-                        onclick = "Shiny.setInputValue('nav_to_account', Math.random(), {priority: 'event'})",
+               background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3);
+               border-radius: 20px; padding: 3px 10px;
+               transition: all 0.15s ease; position: relative;",
+                        class = "industry-nudge-pill",
                         
                         icon("triangle-exclamation",
                              style = "font-size: 10px; color: #E74C3C; flex-shrink: 0;"),
                         tags$span(
-                          style = "font-size: 11px; font-weight: 600; color: #C0392B;
-                       white-space: nowrap;",
-                          "Industry too broad?"
+                          style = "font-size: 11px; font-weight: 600; color: #C0392B; white-space: nowrap;",
+                          "Low presence — fix settings"
                         ),
-                        icon("arrow-right",
-                             style = "font-size: 9px; color: #E74C3C; flex-shrink: 0;"),
                         
                         # Hover tooltip
                         tags$div(
                           class = "industry-nudge-tooltip",
                           style = "position: absolute; left: 0; top: calc(100% + 8px);
-                       background: #F5F5F5; color: #1A1A1A;
-                       font-size: 11px; font-weight: 400; line-height: 1.5;
-                       padding: 10px 12px; border-radius: 8px;
-                       box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-                       border: 1px solid #e2e8f0;
-                       width: 230px; pointer-events: none;
-                       opacity: 0; transition: opacity 0.15s ease;
-                       z-index: 99999;",
-                          div(
-                            style = "font-weight: 700; color: #C0392B; margin-bottom: 4px;",
-                            "Your Presence score is very low"
-                          ),
-                          div(
-                            "A broad industry stops AI models from connecting your brand
-                 to relevant searches. Try something more specific —",
-                            tags$em(" e.g. \"Connected Fitness Hardware\" instead of \"Fitness\"."),
-                            style = "color: #4a5568;"
-                          ),
-                          div(
-                            style = "margin-top: 6px; font-weight: 600; color: #667eea;",
-                            "Click to update your industry →"
-                          )
+                 background: #F5F5F5; color: #1A1A1A;
+                 font-size: 11px; font-weight: 400; line-height: 1.5;
+                 padding: 10px 12px; border-radius: 8px;
+                 box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+                 border: 1px solid #e2e8f0;
+                 width: 240px; pointer-events: none;
+                 opacity: 0; transition: opacity 0.15s ease;
+                 z-index: 99999;",
+                          div(style = "font-weight: 700; color: #C0392B; margin-bottom: 4px;",
+                              "Your Presence score is very low"),
+                          div(style = "color: #4a5568; margin-bottom: 8px;",
+                              "A broad industry or wide reach stops AI models from connecting 
+             your brand to relevant searches."),
+                          div(style = "font-weight: 600; color: #667eea;",
+                              "Go to Account to update \u2192")
                         )
+                      ),
+                      
+                      # Inline action buttons below the pill
+                      div(
+                        style = "display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;",
+                        if (!is.null(industry_payload_pill)) {
+                          tags$button(
+                            style = "background: rgba(231,76,60,0.12); color: #C0392B;
+                   border: 1px solid rgba(231,76,60,0.3);
+                   border-radius: 6px; padding: 3px 10px;
+                   font-size: 11px; font-weight: 600; cursor: pointer;",
+                            onclick = sprintf(
+                              "Shiny.setInputValue('edit_industry_btn', %s, {priority: 'event'})",
+                              industry_payload_pill),
+                            icon("industry", style = "font-size: 10px; margin-right: 4px;"),
+                            "Fix Industry"
+                          )
+                        },
+                        if (!is.null(reach_payload_pill)) {
+                          tags$button(
+                            style = "background: rgba(231,76,60,0.12); color: #C0392B;
+                   border: 1px solid rgba(231,76,60,0.3);
+                   border-radius: 6px; padding: 3px 10px;
+                   font-size: 11px; font-weight: 600; cursor: pointer;",
+                            onclick = sprintf(
+                              "Shiny.setInputValue('edit_reach_btn', %s, {priority: 'event'})",
+                              reach_payload_pill),
+                            icon("globe", style = "font-size: 10px; margin-right: 4px;"),
+                            "Fix Reach"
+                          )
+                        }
                       )
                     )
                   }
@@ -611,37 +663,42 @@ output$dash_score_cards_row <- renderUI({
 plotly_pro_layout <- function(p, y_title = "", show_legend = TRUE) {
   p %>% layout(
     xaxis = list(
-      title = "",
-      showgrid = FALSE,
-      linecolor = "#e2e8f0",
-      tickfont = list(size = 11, color = "#9E9E9E", family = "Inter"),
-      zeroline = FALSE
+      title      = "",
+      showgrid   = FALSE,
+      linecolor  = "#e2e8f0",
+      tickfont   = list(size = 11, color = "#9E9E9E", family = "Inter"),
+      zeroline   = FALSE
     ),
     yaxis = list(
-      title = list(text = y_title, 
-                   font = list(size = 12, color = "#9E9E9E", family = "Inter")),
-      showgrid = TRUE,
+      title    = list(text = y_title,
+                      font = list(size = 12, color = "#9E9E9E", family = "Inter")),
+      showgrid  = TRUE,
       gridcolor = "rgba(0, 0, 0, 0.05)",
       gridwidth = 1,
       linecolor = "#e2e8f0",
-      tickfont = list(size = 11, color = "#9E9E9E", family = "Inter"),
-      zeroline = FALSE
+      tickfont  = list(size = 11, color = "#9E9E9E", family = "Inter"),
+      zeroline  = FALSE
     ),
-    hovermode = 'x unified',
-    plot_bgcolor = "rgba(0,0,0,0)",
+    hovermode    = "closest",        # <-- changed from 'x unified'
+    hoverlabel   = list(
+      bgcolor    = "#1A1A1A",
+      bordercolor = "#D4A843",
+      font       = list(size = 12, color = "#F5F5F0", family = "Inter")
+    ),
+    plot_bgcolor  = "rgba(0,0,0,0)",
     paper_bgcolor = "rgba(0,0,0,0)",
-    margin = list(l = 50, r = 20, t = 10, b = 40),
+    margin        = list(l = 50, r = 20, t = 10, b = 40),
     legend = list(
       orientation = "h",
-      yanchor = "top",
-      y = -0.15,
-      xanchor = "center",
-      x = 0.5,
-      font = list(size = 11, color = "#9E9E9E", family = "Inter"),
-      bgcolor = "rgba(0,0,0,0)"
+      yanchor     = "top",
+      y           = -0.15,
+      xanchor     = "center",
+      x           = 0.5,
+      font        = list(size = 11, color = "#9E9E9E", family = "Inter"),
+      bgcolor     = "rgba(0,0,0,0)"
     ),
     showlegend = show_legend,
-    font = list(family = "Inter")
+    font       = list(family = "Inter")
   ) %>% config(displayModeBar = FALSE)
 }
 
@@ -658,36 +715,80 @@ create_dash_chart <- function(data, score_col, y_title, main_brand_name) {
                     "#E67E22", "#1ABC9C", "#34495E", "#F39C12",
                     "#16A085", "#C0392B")
   
+  # ── Determine top 4 brands by most recent score ──────────────────────
+  latest_by_brand <- data %>%
+    group_by(brand_name) %>%
+    filter(date == max(date)) %>%
+    ungroup() %>%
+    arrange(desc(.data[[score_col]])) %>%
+    mutate(rank = row_number())
+  
+  top4_brands <- latest_by_brand %>%
+    filter(rank <= 4) %>%
+    pull(brand_name)
+  
   p <- plot_ly()
   
   if (nrow(comp_data) > 0) {
     comp_brands <- unique(comp_data$brand_name)
     for (idx in seq_along(comp_brands)) {
-      bn <- comp_brands[idx]
-      bd <- comp_data %>% filter(brand_name == bn)
+      bn  <- comp_brands[idx]
+      bd  <- comp_data %>% filter(brand_name == bn)
       col <- comp_colours[((idx - 1) %% length(comp_colours)) + 1]
+      is_top4 <- bn %in% top4_brands
       
       p <- p %>% add_trace(
-        data = bd, x = ~date, y = as.formula(paste0("~", score_col)),
-        type = 'scatter', mode = 'lines+markers',
+        data = bd,
+        x    = ~date,
+        y    = as.formula(paste0("~", score_col)),
+        type = 'scatter',
+        mode = 'lines+markers',
         name = bn,
-        line = list(width = 2, dash = "dot", shape = "spline", color = col),
+        line = list(
+          width = 2,
+          dash  = if (is_top4) "solid" else "dot",
+          shape = "spline",
+          color = col
+        ),
         marker = list(size = 4, color = col),
         opacity = 0.7,
-        hovertemplate = paste0('<b>', bn, '</b><br>%{y:.1f}<extra></extra>')
+        hovertemplate = paste0(
+          "<b>", bn, "</b><br>",
+          "%{x|%d %b %Y}<br>",
+          y_title, ": <b>%{y:.1f}</b>",
+          "<extra></extra>"
+        )
       )
     }
   }
   
   if (nrow(main_data) > 0) {
+    is_top4 <- main_brand_name %in% top4_brands
+    
     p <- p %>% add_trace(
-      data = main_data, x = ~date, y = as.formula(paste0("~", score_col)),
-      type = 'scatter', mode = 'lines+markers',
+      data = main_data,
+      x    = ~date,
+      y    = as.formula(paste0("~", score_col)),
+      type = 'scatter',
+      mode = 'lines+markers',
       name = paste0("★ ", main_brand_name),
-      line = list(width = 3.5, color = '#D4A843', shape = "spline"),
-      marker = list(size = 7, color = '#D4A843',
-                    line = list(color = '#1A1A1A', width = 1.5)),
-      hovertemplate = paste0('<b>', main_brand_name, '</b><br>%{y:.1f}<extra></extra>')
+      line = list(
+        width = 3.5,
+        dash  = if (is_top4) "solid" else "dot",
+        color = '#D4A843',
+        shape = "spline"
+      ),
+      marker = list(
+        size = 7,
+        color = '#D4A843',
+        line = list(color = '#1A1A1A', width = 1.5)
+      ),
+      hovertemplate = paste0(
+        "<b>★ ", main_brand_name, "</b><br>",
+        "%{x|%d %b %Y}<br>",
+        y_title, ": <b>%{y:.1f}</b>",
+        "<extra></extra>"
+      )
     )
   }
   
@@ -706,7 +807,7 @@ output$dash_chart_airr <- renderPlotly({
 output$dash_chart_presence <- renderPlotly({
   req(user_all_brand_ids())
   brands    <- user_all_brand_ids()
-  login_id  <- rv$login_id                           # NEW
+  login_id  <- rv$login_id
   brand_ids <- brands$brand_id
   placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
@@ -714,20 +815,21 @@ output$dash_chart_presence <- renderPlotly({
     SELECT db.brand_name, db.brand_id, fph.date, fph.overall_score as presence_score
     FROM dim_brand db
     LEFT JOIN fact_presence_history fph
-      ON db.brand_id = fph.brand_id
-      AND fph.login_id = $1                          -- NEW
+      ON db.brand_id = fph.brand_id AND fph.login_id = $1
     WHERE db.brand_id IN (%s) AND fph.overall_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
   ", placeholders), params = as.list(c(login_id, brand_ids)))
   
-  data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  data <- data %>%
+    left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  
   create_dash_chart(data, "presence_score", "Presence Score", rv$brand_name)
 })
 
 output$dash_chart_perception <- renderPlotly({
   req(user_all_brand_ids())
   brands    <- user_all_brand_ids()
-  login_id  <- rv$login_id                           # NEW
+  login_id  <- rv$login_id
   brand_ids <- brands$brand_id
   placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
@@ -735,20 +837,21 @@ output$dash_chart_perception <- renderPlotly({
     SELECT db.brand_name, db.brand_id, fph.date, fph.perception_score
     FROM dim_brand db
     LEFT JOIN fact_perception_history fph
-      ON db.brand_id = fph.brand_id
-      AND fph.login_id = $1                          -- NEW
+      ON db.brand_id = fph.brand_id AND fph.login_id = $1
     WHERE db.brand_id IN (%s) AND fph.perception_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
   ", placeholders), params = as.list(c(login_id, brand_ids)))
   
-  data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  data <- data %>%
+    left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  
   create_dash_chart(data, "perception_score", "Perception Score", rv$brand_name)
 })
 
 output$dash_chart_prestige <- renderPlotly({
   req(user_all_brand_ids())
   brands    <- user_all_brand_ids()
-  login_id  <- rv$login_id                           # NEW
+  login_id  <- rv$login_id
   brand_ids <- brands$brand_id
   placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
@@ -756,20 +859,21 @@ output$dash_chart_prestige <- renderPlotly({
     SELECT db.brand_name, db.brand_id, fph.date, fph.prestige_score
     FROM dim_brand db
     LEFT JOIN fact_prestige_history fph
-      ON db.brand_id = fph.brand_id
-      AND fph.login_id = $1                          -- NEW
+      ON db.brand_id = fph.brand_id AND fph.login_id = $1
     WHERE db.brand_id IN (%s) AND fph.prestige_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
   ", placeholders), params = as.list(c(login_id, brand_ids)))
   
-  data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  data <- data %>%
+    left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  
   create_dash_chart(data, "prestige_score", "Prestige Score", rv$brand_name)
 })
 
 output$dash_chart_persistence <- renderPlotly({
   req(user_all_brand_ids())
   brands    <- user_all_brand_ids()
-  login_id  <- rv$login_id                           # NEW
+  login_id  <- rv$login_id
   brand_ids <- brands$brand_id
   placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
   
@@ -777,13 +881,14 @@ output$dash_chart_persistence <- renderPlotly({
     SELECT db.brand_name, db.brand_id, fph.date, fph.persistence_score
     FROM dim_brand db
     LEFT JOIN fact_persistence_history fph
-      ON db.brand_id = fph.brand_id
-      AND fph.login_id = $1                          -- NEW
+      ON db.brand_id = fph.brand_id AND fph.login_id = $1
     WHERE db.brand_id IN (%s) AND fph.persistence_score IS NOT NULL
     ORDER BY db.brand_name, fph.date
   ", placeholders), params = as.list(c(login_id, brand_ids)))
   
-  data <- data %>% left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  data <- data %>%
+    left_join(brands %>% select(brand_id, main_brand_flag), by = "brand_id")
+  
   create_dash_chart(data, "persistence_score", "Persistence Score", rv$brand_name)
 })
 
@@ -1613,17 +1718,45 @@ render_compact_rankings <- function(data, accent_color = "#667eea") {
     ))
   }
   
+  # ── Zero-score cleaning ───────────────────────────────────────────────
+  # If any P score is 0 for a row, treat all P scores and AiRR as NA
+  data <- data %>%
+    mutate(
+      any_p_zero = (
+        (is.na(presence_score)    | presence_score    == 0) |
+          (is.na(perception_score)  | perception_score  == 0) |
+          (is.na(prestige_score)    | prestige_score    == 0) |
+          (is.na(persistence_score) | persistence_score == 0)
+      ),
+      airr_score        = ifelse(any_p_zero, NA_real_, airr_score),
+      presence_score    = ifelse(any_p_zero, NA_real_, presence_score),
+      perception_score  = ifelse(any_p_zero, NA_real_, perception_score),
+      prestige_score    = ifelse(any_p_zero, NA_real_, prestige_score),
+      persistence_score = ifelse(any_p_zero, NA_real_, persistence_score)
+    ) %>%
+    select(-any_p_zero)
+  
+  # Show NA for zero scores
+  fmt_score <- function(val) {
+    if (is.na(val) || is.null(val) || val == 0) return("NA")
+    round(val, 0)
+  }
+  
+  fmt_score_airr <- function(val) {
+    if (is.na(val) || is.null(val) || val == 0) return("NA")
+    round(val, 1)
+  }
+  
   score_color <- function(val) {
-    if (is.na(val) || is.null(val)) return("#cbd5e0")
+    if (is.na(val) || is.null(val) || val == 0) return("#cbd5e0")
     if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
   }
   
-  # Slightly wider cells now that the leaderboard panel is wider
   score_cell <- function(val) {
     div(
       style = "flex: 0 0 52px; text-align: center; font-size: 12px;
-             font-weight: 600; color: #4a5568;",
-      round(val, 0)
+               font-weight: 600; color: #4a5568;",
+      fmt_score(val)
     )
   }
   
@@ -1720,7 +1853,7 @@ render_compact_rankings <- function(data, accent_color = "#667eea") {
           "flex: 0 0 40px; text-align: right; font-size: 16px; font-weight: 800; ",
           "color: ", score_color(airr_val), "; flex-shrink: 0;"
         ),
-        airr_val
+        fmt_score_airr(airr_val)
       ),
       
       div(style = "flex: 0 0 1px; height: 24px; background: #e2e8f0; flex-shrink: 0;"),
@@ -1746,69 +1879,78 @@ render_compact_rankings <- function(data, accent_color = "#667eea") {
   })
   
   # ── Header ──────────────────────────────────────────────────────────────
-  div(
+  tagList(
+    
+    # Leaderboard heading
     div(
-      style = "display: flex; align-items: center; padding: 8px 10px;
-               background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
-               border-radius: 8px 8px 0 0; gap: 6px;",
-      
-      # Rank placeholder
-      div(style = "flex: 0 0 22px; flex-shrink: 0;"),
-      
-      # Brand
-      div(
-        style = "flex: 1;",
-        tags$span(
-          style = "color: #a0aec0; font-size: 9px; font-weight: 600;
-                   text-transform: uppercase; letter-spacing: 1px;",
-          "Brand"
-        )
-      ),
-      
-      # AiRR
-      div(
-        style = "flex: 0 0 40px; text-align: right; flex-shrink: 0;",
-        tags$span(
-          style = "color: #a0aec0; font-size: 9px; font-weight: 700;
-                   text-transform: uppercase; letter-spacing: 1px;",
-          "AiRR"
-        )
-      ),
-      
-      div(style = "flex: 0 0 1px; height: 20px; background: #4a5568;
-                   flex-shrink: 0;"),
-      
-      # Four P headers — abbreviated with coloured underline + hover tooltip
-      div(
-        class = "ldb-col-header",
-        style = "flex: 0 0 52px; border-bottom-color: #27AE60;",
-        `data-tooltip` = "Presence",
-        tags$span(style = "color: #27AE60;", "Pres")
-      ),
-      div(
-        class = "ldb-col-header",
-        style = "flex: 0 0 52px; border-bottom-color: #D4A843;",
-        `data-tooltip` = "Perception",
-        tags$span(style = "color: #D4A843;", "Perc")
-      ),
-      div(
-        class = "ldb-col-header",
-        style = "flex: 0 0 52px; border-bottom-color: #8E44AD;",
-        `data-tooltip` = "Prestige",
-        tags$span(style = "color: #8E44AD;", "Prest")
-      ),
-      div(
-        class = "ldb-col-header",
-        style = "flex: 0 0 52px; border-bottom-color: #2980B9;",
-        `data-tooltip` = "Persistence",
-        tags$span(style = "color: #2980B9;", "Pers")
+      style = "display: flex; align-items: center; gap: 8px; margin-bottom: 10px;",
+      icon("trophy", style = "color: #D4A843; font-size: 13px;"),
+      tags$span(
+        style = "font-size: 12px; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: 1px; color: #4a5568;",
+        "Leaderboard"
       )
     ),
     
     div(
-      style = "border: 1px solid #e2e8f0; border-top: none;
-               border-radius: 0 0 8px 8px; overflow: hidden;",
-      do.call(tagList, rows)
+      div(
+        style = "display: flex; align-items: center; padding: 8px 10px;
+                 background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+                 border-radius: 8px 8px 0 0; gap: 6px;",
+        
+        div(style = "flex: 0 0 22px; flex-shrink: 0;"),
+        
+        div(
+          style = "flex: 1;",
+          tags$span(
+            style = "color: #a0aec0; font-size: 9px; font-weight: 600;
+                     text-transform: uppercase; letter-spacing: 1px;",
+            "Brand"
+          )
+        ),
+        
+        div(
+          style = "flex: 0 0 40px; text-align: right; flex-shrink: 0;",
+          tags$span(
+            style = "color: #a0aec0; font-size: 9px; font-weight: 700;
+                     text-transform: uppercase; letter-spacing: 1px;",
+            "AiRR"
+          )
+        ),
+        
+        div(style = "flex: 0 0 1px; height: 20px; background: #4a5568; flex-shrink: 0;"),
+        
+        div(
+          class = "ldb-col-header",
+          style = "flex: 0 0 52px; border-bottom-color: #27AE60;",
+          `data-tooltip` = "Presence",
+          tags$span(style = "color: #27AE60;", "Pres")
+        ),
+        div(
+          class = "ldb-col-header",
+          style = "flex: 0 0 52px; border-bottom-color: #D4A843;",
+          `data-tooltip` = "Perception",
+          tags$span(style = "color: #D4A843;", "Perc")
+        ),
+        div(
+          class = "ldb-col-header",
+          style = "flex: 0 0 52px; border-bottom-color: #8E44AD;",
+          `data-tooltip` = "Prestige",
+          tags$span(style = "color: #8E44AD;", "Prest")
+        ),
+        div(
+          class = "ldb-col-header",
+          style = "flex: 0 0 52px; border-bottom-color: #2980B9;",
+          `data-tooltip` = "Persistence",
+          tags$span(style = "color: #2980B9;", "Pers")
+        )
+      ),
+      
+      div(
+        style = "border: 1px solid #e2e8f0; border-top: none;
+                 border-radius: 0 0 8px 8px; overflow: hidden;",
+        do.call(tagList, rows)
+      )
     )
   )
 }
@@ -2561,47 +2703,85 @@ create_quadrant_chart <- function(data,
     )
   
   # Add brand bubbles
-  for (i in seq_len(nrow(data))) {
-    is_main <- !is.null(main_brand_name) && 
-      !is.na(data$brand_name[i]) && 
-      data$brand_name[i] == main_brand_name
-    
-    hover_text <- paste0(
-      "<b>", data$brand_name[i], "</b><br>",
-      x_label, ": ", round(data[[x_col]][i], 1), "<br>",
-      y_label, ": ", round(data[[y_col]][i], 1),
-      if (!is.null(bubble_col)) {
-        paste0("<br>", if (!is.null(bubble_label)) bubble_label else bubble_col, 
-               ": ", round(data[[bubble_col]][i], 1))
-      } else { "" }
-    )
-    
-    p <- p %>%
-      add_trace(
-        type = "scatter", mode = "markers+text",
-        x = data[[x_col]][i],
-        y = data[[y_col]][i],
-        marker = list(
-          size   = marker_size[i],
-          color  = colours[i],
-          opacity = if (is_main) 1.0 else 0.8,
-          line   = list(
-            color = if (is_main) "#1A1A1A" else "white",
-            width = if (is_main) 2.5 else 1.5
-          )
+  # Add competitor bubbles — no text labels, hover only
+  comp_data <- data[sapply(seq_len(nrow(data)), function(i) {
+    is.null(main_brand_name) || is.na(data$brand_name[i]) || 
+      data$brand_name[i] != main_brand_name
+  }), ]
+  
+  if (nrow(comp_data) > 0) {
+    for (i in seq_len(nrow(comp_data))) {
+      
+      hover_text <- paste0(
+        "<b>", comp_data$brand_name[i], "</b><br>",
+        x_label, ": ", round(comp_data[[x_col]][i], 1), "<br>",
+        y_label, ": ", round(comp_data[[y_col]][i], 1),
+        if (!is.null(bubble_col)) {
+          paste0("<br>", if (!is.null(bubble_label)) bubble_label else bubble_col,
+                 ": ", round(comp_data[[bubble_col]][i], 1))
+        } else ""
+      )
+      
+      p <- p %>% add_trace(
+        type      = "scatter",
+        mode      = "markers",          # no text
+        x         = comp_data[[x_col]][i],
+        y         = comp_data[[y_col]][i],
+        marker    = list(
+          size    = marker_size[which(data$brand_name == comp_data$brand_name[i])[1]],
+          color   = colours[which(data$brand_name == comp_data$brand_name[i])[1]],
+          opacity = 0.8,
+          line    = list(color = "white", width = 1.5)
         ),
-        text      = data$brand_name[i],
-        textposition = "top center",
-        textfont  = list(
-          size   = if (is_main) 13 else 11,
-          color  = if (is_main) "#D4A843" else "#4a5568",
-          family = "Inter"
-        ),
-        name      = data$brand_name[i],
+        name      = comp_data$brand_name[i],
         hovertext = hover_text,
         hoverinfo = "text",
         showlegend = FALSE
       )
+    }
+  }
+  
+  # Add main brand bubble — with text label
+  main_data <- data[!is.null(main_brand_name) & 
+                      !is.na(data$brand_name) & 
+                      data$brand_name == main_brand_name, ]
+  
+  if (nrow(main_data) > 0) {
+    main_idx <- which(data$brand_name == main_brand_name)[1]
+    
+    hover_text <- paste0(
+      "<b>", main_brand_name, "</b><br>",
+      x_label, ": ", round(main_data[[x_col]][1], 1), "<br>",
+      y_label, ": ", round(main_data[[y_col]][1], 1),
+      if (!is.null(bubble_col)) {
+        paste0("<br>", if (!is.null(bubble_label)) bubble_label else bubble_col,
+               ": ", round(main_data[[bubble_col]][1], 1))
+      } else ""
+    )
+    
+    p <- p %>% add_trace(
+      type         = "scatter",
+      mode         = "markers+text",    # label only for main brand
+      x            = main_data[[x_col]][1],
+      y            = main_data[[y_col]][1],
+      marker       = list(
+        size       = marker_size[main_idx],
+        color      = "#D4A843",
+        opacity    = 1.0,
+        line       = list(color = "#1A1A1A", width = 2.5)
+      ),
+      text         = paste0("★ ", main_brand_name),
+      textposition = "top center",
+      textfont     = list(
+        size   = 13,
+        color  = "#D4A843",
+        family = "Inter"
+      ),
+      name         = main_brand_name,
+      hovertext    = hover_text,
+      hoverinfo    = "text",
+      showlegend   = FALSE
+    )
   }
   
   p %>% layout(
@@ -2732,3 +2912,207 @@ output$dash_query_quadrant_momentum <- renderPlotly({
 observeEvent(input$nav_to_account, {
   updateTabItems(session, "sidebar", "account")
 })
+
+output$sidebar_brand_card <- renderUI({
+  req(rv$logged_in, rv$brand_name)
+  
+  info <- tryCatch(
+    dbGetQuery(pool, "
+      SELECT b.brand_reach, b.reach_country, b.reach_region,
+             b.reach_postcode, ubt.industry
+      FROM fact_user_brands_tracked ubt
+      JOIN dim_brand b ON b.brand_id = ubt.brand_id
+      WHERE ubt.login_id = $1
+        AND ubt.main_brand_flag = TRUE
+        AND ubt.date_valid_from <= CURRENT_DATE
+        AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+      LIMIT 1",
+               params = list(rv$login_id)),
+    error = function(e) NULL
+  )
+  
+  industry_str <- if (!is.null(info) && nrow(info) > 0 &&
+                      !is.na(info$industry[1]) && nzchar(info$industry[1] %||% "")) {
+    info$industry[1]
+  } else NULL
+  
+  reach_str <- if (!is.null(info) && nrow(info) > 0) {
+    format_reach_display(info$brand_reach[1], info$reach_country[1],
+                         info$reach_region[1], info$reach_postcode[1])
+  } else "Global"
+  
+  div(
+    style = "margin: 16px 12px 8px; padding: 14px;
+             background: rgba(212,168,67,0.08);
+             border: 1px solid rgba(212,168,67,0.25);
+             border-radius: 10px;",
+    
+    # Brand name
+    div(
+      style = "display: flex; align-items: center; gap: 8px; margin-bottom: 8px;",
+      div(
+        style = "width: 28px; height: 28px; border-radius: 7px;
+                 background: rgba(212,168,67,0.2); display: flex;
+                 align-items: center; justify-content: center; flex-shrink: 0;",
+        icon("building", style = "font-size: 12px; color: #D4A843;")
+      ),
+      div(
+        style = "font-size: 13px; font-weight: 700; color: #D4A843;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
+        rv$brand_name
+      )
+    ),
+    
+    # Industry
+    if (!is.null(industry_str)) {
+      div(
+        style = "display: flex; align-items: flex-start; gap: 6px; margin-bottom: 4px;",
+        icon("industry",
+             style = "font-size: 10px; color: #9E9E9E; margin-top: 2px; flex-shrink: 0;"),
+        div(
+          style = "font-size: 11px; color: #9E9E9E; line-height: 1.4;",
+          industry_str
+        )
+      )
+    },
+    
+    # Reach
+    div(
+      style = "display: flex; align-items: center; gap: 6px;",
+      icon("globe",
+           style = "font-size: 10px; color: #9E9E9E; flex-shrink: 0;"),
+      div(
+        style = "font-size: 11px; color: #9E9E9E;",
+        reach_str
+      )
+    )
+  )
+})
+
+# ============================================
+# Sticky score bar — shown when score cards scroll out of view
+# ============================================
+
+output$sticky_score_bar_ui <- renderUI({
+  req(rv$logged_in, rv$login_id, rv$brand_name)
+  
+  scores <- tryCatch(dash_latest_scores(), error = function(e) NULL)
+  if (is.null(scores) || nrow(scores) == 0) return(NULL)
+  
+  main <- scores %>% filter(main_brand_flag == TRUE)
+  if (nrow(main) == 0) return(NULL)
+  
+  fmt <- function(val, digits = 0) {
+    if (is.na(val) || is.null(val) || val == 0) return("NA")
+    round(val, digits)
+  }
+  
+  val_color <- function(val) {
+    if (is.na(val) || is.null(val) || val == 0) return("#718096")
+    if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+  }
+  
+  div(
+    style = "background: rgba(212,168,67,0.06);
+             border: 1px solid rgba(212,168,67,0.2);
+             border-radius: 10px; padding: 10px 12px;
+             margin-top: 8px;",
+    
+    # Header row
+    div(
+      style = "display: flex; align-items: center; gap: 6px; margin-bottom: 10px;",
+      icon("chart-line", style = "font-size: 10px; color: #D4A843;"),
+      tags$span(
+        style = "font-size: 10px; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: 0.8px; color: #D4A843;",
+        "Current Scores"
+      ),
+      div(
+        style = "margin-left: auto; font-size: 10px; color: #9E9E9E;",
+        format(main$date[1], "%b %d")
+      )
+    ),
+    
+    # AiRR — larger, prominent
+    div(
+      style = "display: flex; align-items: center; justify-content: space-between;
+               padding: 6px 0; border-bottom: 1px solid rgba(212,168,67,0.15);
+               margin-bottom: 6px;",
+      tags$span(
+        style = "font-size: 11px; font-weight: 600; color: #9E9E9E;",
+        "AiRR Score"
+      ),
+      tags$span(
+        style = paste0("font-size: 20px; font-weight: 800; color: ",
+                       val_color(main$airr_score[1]), ";"),
+        fmt(main$airr_score[1], digits = 1)
+      )
+    ),
+    
+    # Four P scores — compact rows
+    div(
+      style = "display: flex; flex-direction: column; gap: 4px;",
+      
+      # Presence
+      div(
+        style = "display: flex; align-items: center; justify-content: space-between;",
+        div(
+          style = "display: flex; align-items: center; gap: 5px;",
+          div(style = "width: 6px; height: 6px; border-radius: 50%;
+                       background: #27AE60; flex-shrink: 0;"),
+          tags$span(style = "font-size: 11px; color: #9E9E9E;", "Presence")
+        ),
+        tags$span(
+          style = "font-size: 13px; font-weight: 700; color: #4a5568;",
+          fmt(main$presence_score[1])
+        )
+      ),
+      
+      # Perception
+      div(
+        style = "display: flex; align-items: center; justify-content: space-between;",
+        div(
+          style = "display: flex; align-items: center; gap: 5px;",
+          div(style = "width: 6px; height: 6px; border-radius: 50%;
+                       background: #D4A843; flex-shrink: 0;"),
+          tags$span(style = "font-size: 11px; color: #9E9E9E;", "Perception")
+        ),
+        tags$span(
+          style = "font-size: 13px; font-weight: 700; color: #4a5568;",
+          fmt(main$perception_score[1])
+        )
+      ),
+      
+      # Prestige
+      div(
+        style = "display: flex; align-items: center; justify-content: space-between;",
+        div(
+          style = "display: flex; align-items: center; gap: 5px;",
+          div(style = "width: 6px; height: 6px; border-radius: 50%;
+                       background: #8E44AD; flex-shrink: 0;"),
+          tags$span(style = "font-size: 11px; color: #9E9E9E;", "Prestige")
+        ),
+        tags$span(
+          style = "font-size: 13px; font-weight: 700; color: #4a5568;",
+          fmt(main$prestige_score[1])
+        )
+      ),
+      
+      # Persistence
+      div(
+        style = "display: flex; align-items: center; justify-content: space-between;",
+        div(
+          style = "display: flex; align-items: center; gap: 5px;",
+          div(style = "width: 6px; height: 6px; border-radius: 50%;
+                       background: #2980B9; flex-shrink: 0;"),
+          tags$span(style = "font-size: 11px; color: #9E9E9E;", "Persistence")
+        ),
+        tags$span(
+          style = "font-size: 13px; font-weight: 700; color: #4a5568;",
+          fmt(main$persistence_score[1])
+        )
+      )
+    )
+  )
+})
+

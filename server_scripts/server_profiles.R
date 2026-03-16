@@ -53,6 +53,44 @@ observeEvent(input$upgrade_from_profiles, {
 })
 
 # ============================================
+# Zero-score cleaning helper
+# ============================================
+
+clean_persona_scores <- function(scores) {
+  if (is.null(scores) || nrow(scores) == 0) return(scores)
+  
+  scores %>%
+    mutate(
+      any_p_zero = (
+        (is.na(presence_score)    | presence_score    == 0) |
+          (is.na(perception_score)  | perception_score  == 0) |
+          (is.na(prestige_score)    | prestige_score    == 0) |
+          (is.na(persistence_score) | persistence_score == 0)
+      ),
+      airr_score        = ifelse(any_p_zero | airr_score == 0, NA_real_, airr_score),
+      presence_score    = ifelse(any_p_zero, NA_real_, presence_score),
+      perception_score  = ifelse(any_p_zero, NA_real_, perception_score),
+      prestige_score    = ifelse(any_p_zero, NA_real_, prestige_score),
+      persistence_score = ifelse(any_p_zero, NA_real_, persistence_score)
+    ) %>%
+    select(-any_p_zero)
+}
+
+# ============================================
+# Score display helpers
+# ============================================
+
+fmt_persona_score <- function(val, digits = 0) {
+  if (is.na(val) || is.null(val) || val == 0) return("NA")
+  round(val, digits)
+}
+
+persona_score_color <- function(val) {
+  if (is.na(val) || is.null(val)) return("#cbd5e0")
+  if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+}
+
+# ============================================
 # Main profiles UI (enterprise only)
 # ============================================
 
@@ -77,14 +115,13 @@ profiles_main_ui <- function() {
           
           # Add standard profile
           div(
-            style = "margin-bottom: 4px;",       # reduced — notice sits below
+            style = "margin-bottom: 4px;",
             selectInput(
               "add_standard_profile_select",
               NULL,
               choices = c("Add a standard persona..." = "", STANDARD_PROFILE_NAMES),
               width = "100%"
             ),
-            # Timing notice for standard persona
             uiOutput("profile_standard_timing_notice"),
             div(style = "margin-top: 8px;",
                 actionButton(
@@ -120,7 +157,6 @@ profiles_main_ui <- function() {
               placeholder = "Describe this customer in first person — e.g. 'I am a...' This will be prefixed to all scoring prompts.",
               style = "font-size: 13px; resize: vertical; margin-bottom: 8px;"
             ),
-            # Timing notice for custom persona
             uiOutput("profile_custom_timing_notice"),
             div(style = "margin-top: 8px;",
                 actionButton(
@@ -152,8 +188,8 @@ profiles_main_ui <- function() {
 # Reactives
 # ============================================
 
-profiles_refresh     <- reactiveVal(0)
-selected_profile_id  <- reactiveVal(NULL)
+profiles_refresh    <- reactiveVal(0)
+selected_profile_id <- reactiveVal(NULL)
 
 user_profiles <- reactive({
   req(rv$logged_in, rv$login_id)
@@ -185,35 +221,21 @@ MAX_PROFILES <- 10
 
 output$profile_standard_timing_notice <- renderUI({
   req(rv$logged_in, rv$login_id)
-  
   selected_name <- input$add_standard_profile_select
   if (is.null(selected_name) || selected_name == "") return(NULL)
-  
-  est <- tryCatch(
-    estimate_persona_add_time(rv$login_id),
-    error = function(e) NULL
-  )
+  est <- tryCatch(estimate_persona_add_time(rv$login_id), error = function(e) NULL)
   if (is.null(est)) return(NULL)
-  
   render_timing_notice(est$time_str, est$breakdown, "persona")
 })
 
 output$profile_custom_timing_notice <- renderUI({
   req(rv$logged_in, rv$login_id)
-  
-  # Show when user has filled in at least a name
   pname <- input$custom_profile_name
   if (is.null(pname) || nchar(trimws(pname)) < 2) return(NULL)
-  
-  est <- tryCatch(
-    estimate_persona_add_time(rv$login_id),
-    error = function(e) NULL
-  )
+  est <- tryCatch(estimate_persona_add_time(rv$login_id), error = function(e) NULL)
   if (is.null(est)) return(NULL)
-  
   render_timing_notice(est$time_str, est$breakdown, "persona")
 })
-
 
 # ============================================
 # Slot badge
@@ -222,7 +244,6 @@ output$profile_custom_timing_notice <- renderUI({
 output$profile_slot_badge <- renderUI({
   used      <- user_profile_count()
   remaining <- MAX_PROFILES - used
-  
   if (remaining > 0) {
     tags$span(class = "slot-badge available",
               paste0(remaining, " slot", ifelse(remaining != 1, "s", ""), " remaining"))
@@ -275,27 +296,23 @@ output$profile_list_ui <- renderUI({
             "flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px; ",
             "display: flex; align-items: center; justify-content: center; ",
             "font-size: 13px; margin-right: 10px; ",
-            if (is_sel) {
-              "background: #8E44AD; color: white;"
-            } else {
-              "background: rgba(142,68,173,0.1); color: #8E44AD;"
-            }
+            if (is_sel) "background: #8E44AD; color: white;"
+            else        "background: rgba(142,68,173,0.1); color: #8E44AD;"
           ),
           icon(if (is_std) "users" else "user-pen")
         ),
         
         div(
           style = "flex: 1; min-width: 0;",
-          div(style = paste0("font-size: 13px; font-weight: ",
-                             if (is_sel) "600" else "500",
-                             "; color: #2d3748; white-space: nowrap; ",
-                             "overflow: hidden; text-overflow: ellipsis;"),
-              pname),
+          div(style = paste0(
+            "font-size: 13px; font-weight: ", if (is_sel) "600" else "500",
+            "; color: #2d3748; white-space: nowrap; ",
+            "overflow: hidden; text-overflow: ellipsis;"),
+            pname),
           div(style = "font-size: 11px; color: #a0aec0;",
               if (is_std) "Standard" else "Custom")
         ),
         
-        # Remove button — stopPropagation so it doesn't also fire select
         tags$button(
           class = "btn-remove",
           style = "flex: 0 0 28px;",
@@ -330,12 +347,10 @@ observeEvent(input$add_standard_profile_btn, {
     showNotification("Please select a profile to add.", type = "error", duration = 3)
     return()
   }
-  
   if (user_profile_count() >= MAX_PROFILES) {
-    showNotification("persona limit reached.", type = "error", duration = 3)
+    showNotification("Persona limit reached.", type = "error", duration = 3)
     return()
   }
-  
   existing <- user_profiles()
   if (profile_name %in% existing$profile_name) {
     showNotification("You're already tracking this profile.", type = "warning", duration = 3)
@@ -343,21 +358,19 @@ observeEvent(input$add_standard_profile_btn, {
   }
   
   pid_row <- dbGetQuery(pool,
-                        "SELECT profile_id FROM dim_customer_profile 
-                         WHERE profile_name = $1",
+                        "SELECT profile_id FROM dim_customer_profile WHERE profile_name = $1",
                         params = list(profile_name))
   
   if (nrow(pid_row) == 0) {
-    showNotification("persona not found.", type = "error", duration = 3)
+    showNotification("Persona not found.", type = "error", duration = 3)
     return()
   }
   
   tryCatch({
     dbExecute(pool,
-              "INSERT INTO fact_user_profiles_tracked 
-                 (login_id, profile_id, date_valid_from)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (login_id, profile_id, date_valid_from) DO NOTHING",
+              "INSERT INTO fact_user_profiles_tracked (login_id, profile_id, date_valid_from)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (login_id, profile_id, date_valid_from) DO NOTHING",
               params = list(rv$login_id, pid_row$profile_id[1], Sys.Date()))
     
     updateSelectInput(session, "add_standard_profile_select", selected = "")
@@ -366,17 +379,12 @@ observeEvent(input$add_standard_profile_btn, {
     
     showNotification(
       paste0("\u2713 ", profile_name, " added! Calculating scores in the background..."),
-      type = "message", duration = 5
-    )
+      type = "message", duration = 5)
     
-    # Insert job into queue
-    dbExecute(pool, "
-        INSERT INTO dim_job_queue (job_type, login_id, payload)
-        VALUES ('score_profile', $1, $2)",
-              params = list(rv$login_id, toJSON(list(
-                profile_id = pid_row$profile_id[1]
-              ), auto_unbox = TRUE)))
-    
+    dbExecute(pool,
+              "INSERT INTO dim_job_queue (job_type, login_id, payload) VALUES ('score_profile', $1, $2)",
+              params = list(rv$login_id, toJSON(list(profile_id = pid_row$profile_id[1]),
+                                                auto_unbox = TRUE)))
   }, error = function(e) {
     showNotification(paste("Error adding profile:", e$message), type = "error", duration = 5)
   })
@@ -407,20 +415,17 @@ observeEvent(input$add_custom_profile_btn, {
   
   tryCatch({
     new_profile <- dbGetQuery(pool,
-                              "INSERT INTO dim_customer_profile 
-                                 (profile_name, profile_descriptor, is_standard, 
-                                  created_by_login, date_created)
-                               VALUES ($1, $2, FALSE, $3, $4) 
-                               RETURNING profile_id",
+                              "INSERT INTO dim_customer_profile
+         (profile_name, profile_descriptor, is_standard, created_by_login, date_created)
+       VALUES ($1, $2, FALSE, $3, $4) RETURNING profile_id",
                               params = list(pname, pdesc, rv$login_id, Sys.Date()))
     
     pid <- new_profile$profile_id[1]
     
     dbExecute(pool,
-              "INSERT INTO fact_user_profiles_tracked 
-                 (login_id, profile_id, date_valid_from)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (login_id, profile_id, date_valid_from) DO NOTHING",
+              "INSERT INTO fact_user_profiles_tracked (login_id, profile_id, date_valid_from)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (login_id, profile_id, date_valid_from) DO NOTHING",
               params = list(rv$login_id, pid, Sys.Date()))
     
     updateTextInput(session, "custom_profile_name", value = "")
@@ -430,16 +435,11 @@ observeEvent(input$add_custom_profile_btn, {
     
     showNotification(
       paste0("\u2713 '", pname, "' created! Calculating scores in the background..."),
-      type = "message", duration = 5
-    )
+      type = "message", duration = 5)
     
-    # Insert job into queue
-    dbExecute(pool, "
-      INSERT INTO dim_job_queue (job_type, login_id, payload)
-      VALUES ('score_profile', $1, $2)",
-              params = list(rv$login_id, toJSON(list(
-                profile_id = pid
-              ), auto_unbox = TRUE)))
+    dbExecute(pool,
+              "INSERT INTO dim_job_queue (job_type, login_id, payload) VALUES ('score_profile', $1, $2)",
+              params = list(rv$login_id, toJSON(list(profile_id = pid), auto_unbox = TRUE)))
     
   }, error = function(e) {
     showNotification(paste("Error creating profile:", e$message), type = "error", duration = 5)
@@ -448,8 +448,6 @@ observeEvent(input$add_custom_profile_btn, {
 
 # ============================================
 # Remove profile
-# FIX: use date_valid_to = CURRENT_DATE - 1 so the record is 
-# immediately excluded by the > CURRENT_DATE filter in user_profiles()
 # ============================================
 
 observeEvent(input$remove_profile_id, {
@@ -459,33 +457,31 @@ observeEvent(input$remove_profile_id, {
   tryCatch({
     rows_affected <- dbExecute(pool,
                                "UPDATE fact_user_profiles_tracked
-               SET date_valid_to = CURRENT_DATE - INTERVAL '1 day'
-               WHERE login_id = $1 
-                 AND profile_id = $2
-                 AND (date_valid_to IS NULL OR date_valid_to > CURRENT_DATE)",
+       SET date_valid_to = CURRENT_DATE - INTERVAL '1 day'
+       WHERE login_id = $1
+         AND profile_id = $2
+         AND (date_valid_to IS NULL OR date_valid_to > CURRENT_DATE)",
                                params = list(rv$login_id, pid))
     
     if (rows_affected == 0) {
-      showNotification("Could not find that persona to remove.", type = "warning", duration = 3)
+      showNotification("Could not find that persona to remove.",
+                       type = "warning", duration = 3)
       return()
     }
     
-    # Clear selected state in all contexts
-    if (!is.null(selected_profile_id()) && selected_profile_id() == pid) {
+    if (!is.null(selected_profile_id())       && selected_profile_id()       == pid)
       selected_profile_id(NULL)
-    }
-    if (!is.null(selected_brand_profile_id()) && selected_brand_profile_id() == pid) {
+    if (!is.null(selected_brand_profile_id()) && selected_brand_profile_id() == pid)
       selected_brand_profile_id(NULL)
-    }
-    if (!is.null(selected_prompt_profile_id()) && selected_prompt_profile_id() == pid) {
+    if (!is.null(selected_prompt_profile_id()) && selected_prompt_profile_id() == pid)
       selected_prompt_profile_id(NULL)
-    }
     
     profiles_refresh(profiles_refresh() + 1)
     showNotification("\u2713 Persona removed", type = "message", duration = 3)
     
   }, error = function(e) {
-    showNotification(paste("Error removing persona:", e$message), type = "error", duration = 5)
+    showNotification(paste("Error removing persona:", e$message),
+                     type = "error", duration = 5)
   })
 })
 
@@ -514,7 +510,6 @@ output$profile_scores_ui <- renderUI({
   prof_desc <- prof_row$profile_descriptor[1]
   
   div(
-    # Profile header
     div(
       class = "box",
       style = "border-radius: 12px; padding: 20px; margin-bottom: 16px;
@@ -530,22 +525,19 @@ output$profile_scores_ui <- renderUI({
         ),
         div(
           style = "flex: 1;",
-          div(style = "font-size: 18px; font-weight: 700; color: #F5F5F0; 
-                       margin-bottom: 6px;",
-              prof_name),
-          div(style = "font-size: 12px; color: #9E9E9E; line-height: 1.5; 
+          div(style = "font-size: 18px; font-weight: 700; color: #F5F5F0;
+                       margin-bottom: 6px;", prof_name),
+          div(style = "font-size: 12px; color: #9E9E9E; line-height: 1.5;
                        font-style: italic;",
               paste0('"', prof_desc, '"'))
         )
       )
     ),
     
-    # Score cards
     uiOutput(paste0("profile_score_cards_", pid)),
     
     br(),
     
-    # Charts
     div(
       class = "box",
       style = "border-radius: 12px; padding: 20px;
@@ -555,25 +547,25 @@ output$profile_scores_ui <- renderUI({
       tabsetPanel(
         type = "tabs",
         tabPanel("AIRR Score",
-                 withSpinner(
-                   plotlyOutput(paste0("profile_chart_airr_", pid), height = "350px"),
-                   type = 4, color = "#8E44AD")),
+                 withSpinner(plotlyOutput(paste0("profile_chart_airr_", pid),
+                                          height = "350px"),
+                             type = 4, color = "#8E44AD")),
         tabPanel("Presence",
-                 withSpinner(
-                   plotlyOutput(paste0("profile_chart_presence_", pid), height = "350px"),
-                   type = 4, color = "#8E44AD")),
+                 withSpinner(plotlyOutput(paste0("profile_chart_presence_", pid),
+                                          height = "350px"),
+                             type = 4, color = "#8E44AD")),
         tabPanel("Perception",
-                 withSpinner(
-                   plotlyOutput(paste0("profile_chart_perception_", pid), height = "350px"),
-                   type = 4, color = "#8E44AD")),
+                 withSpinner(plotlyOutput(paste0("profile_chart_perception_", pid),
+                                          height = "350px"),
+                             type = 4, color = "#8E44AD")),
         tabPanel("Prestige",
-                 withSpinner(
-                   plotlyOutput(paste0("profile_chart_prestige_", pid), height = "350px"),
-                   type = 4, color = "#8E44AD")),
+                 withSpinner(plotlyOutput(paste0("profile_chart_prestige_", pid),
+                                          height = "350px"),
+                             type = 4, color = "#8E44AD")),
         tabPanel("Persistence",
-                 withSpinner(
-                   plotlyOutput(paste0("profile_chart_persistence_", pid), height = "350px"),
-                   type = 4, color = "#8E44AD"))
+                 withSpinner(plotlyOutput(paste0("profile_chart_persistence_", pid),
+                                          height = "350px"),
+                             type = 4, color = "#8E44AD"))
       )
     )
   )
@@ -595,6 +587,7 @@ observe({
     # Score cards
     output[[paste0("profile_score_cards_", local_pid)]] <- renderUI({
       scores <- get_profile_brand_scores(rv$login_id, local_pid)
+      scores <- clean_persona_scores(scores)
       
       if (is.null(scores) || nrow(scores) == 0) {
         return(div(
@@ -608,11 +601,11 @@ observe({
       
       main <- scores %>% filter(main_brand_flag == TRUE)
       
-      airr_val        <- if (nrow(main) > 0) round(main$airr_score[1], 1)        else "—"
-      presence_val    <- if (nrow(main) > 0) round(main$presence_score[1], 1)    else "—"
-      perception_val  <- if (nrow(main) > 0) round(main$perception_score[1], 1)  else "—"
-      prestige_val    <- if (nrow(main) > 0) round(main$prestige_score[1], 1)    else "—"
-      persistence_val <- if (nrow(main) > 0) round(main$persistence_score[1], 1) else "—"
+      airr_val        <- if (nrow(main) > 0) fmt_persona_score(main$airr_score[1],       1) else "—"
+      presence_val    <- if (nrow(main) > 0) fmt_persona_score(main$presence_score[1])    else "—"
+      perception_val  <- if (nrow(main) > 0) fmt_persona_score(main$perception_score[1])  else "—"
+      prestige_val    <- if (nrow(main) > 0) fmt_persona_score(main$prestige_score[1])    else "—"
+      persistence_val <- if (nrow(main) > 0) fmt_persona_score(main$persistence_score[1]) else "—"
       
       fluidRow(
         column(3,
@@ -624,15 +617,19 @@ observe({
         column(9,
                div(class = "score-card-grid",
                    div(class = "score-card-mini presence",
+                       `data-tooltip` = "Are you appearing?",
                        div(class = "score-label", "Presence"),
                        div(class = "score-value", presence_val)),
                    div(class = "score-card-mini perception",
+                       `data-tooltip` = "How are you described?",
                        div(class = "score-label", "Perception"),
                        div(class = "score-value", perception_val)),
                    div(class = "score-card-mini prestige",
+                       `data-tooltip` = "Are you recommended above competitors?",
                        div(class = "score-label", "Prestige"),
                        div(class = "score-value", prestige_val)),
                    div(class = "score-card-mini persistence",
+                       `data-tooltip` = "Does your visibility hold over time?",
                        div(class = "score-label", "Persistence"),
                        div(class = "score-value", persistence_val))
                )
@@ -652,9 +649,7 @@ observe({
     lapply(chart_specs, function(spec) {
       output[[paste0("profile_chart_", spec$id, "_", local_pid)]] <- renderPlotly({
         ts <- get_profile_brand_timeseries(rv$login_id, local_pid)
-        if (is.null(ts) || nrow(ts) == 0) {
-          return(plotly_empty_state("No data yet"))
-        }
+        if (is.null(ts) || nrow(ts) == 0) return(plotly_empty_state("No data yet"))
         create_profile_dash_chart(ts, spec$col, spec$label, rv$brand_name)
       })
     })
@@ -715,22 +710,17 @@ output$brand_overview_profiles_section <- renderUI({
       pid   <- profiles$profile_id[i]
       pname <- profiles$profile_name[i]
       
-      is_selected <- !is.null(selected_brand_profile_id()) && 
+      is_selected <- !is.null(selected_brand_profile_id()) &&
         selected_brand_profile_id() == pid
       
       div(
         style = paste0(
           "flex: 1; min-width: 200px; cursor: pointer; border-radius: 12px; ",
           "transition: all 0.2s ease; ",
-          if (is_selected) {
-            "outline: 3px solid #8E44AD; outline-offset: 2px;"
-          } else {
-            ""
-          }
+          if (is_selected) "outline: 3px solid #8E44AD; outline-offset: 2px;" else ""
         ),
         onclick = sprintf(
-          "Shiny.setInputValue('brand_profile_card_click', %d, {priority: 'event'})",
-          pid
+          "Shiny.setInputValue('brand_profile_card_click', %d, {priority: 'event'})", pid
         ),
         uiOutput(paste0("brand_overview_profile_card_", pid))
       )
@@ -755,28 +745,24 @@ observe({
     
     output[[paste0("brand_overview_profile_card_", local_pid)]] <- renderUI({
       scores <- get_profile_brand_scores(rv$login_id, local_pid)
-      
-      score_color <- function(val) {
-        if (is.na(val) || is.null(val)) return("#cbd5e0")
-        if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
-      }
+      scores <- clean_persona_scores(scores)
       
       div(
         style = "background: white; border-radius: 12px; padding: 16px;
                  border: 1px solid #e2e8f0; border-top: 3px solid #8E44AD;
                  transition: all 0.2s ease;",
         
-        # Profile header
+        # Header
         div(
           style = "display: flex; align-items: center; gap: 8px; margin-bottom: 14px;",
           div(
-            style = "width: 28px; height: 28px; border-radius: 8px; 
-                     background: rgba(142,68,173,0.1); display: flex; 
+            style = "width: 28px; height: 28px; border-radius: 8px;
+                     background: rgba(142,68,173,0.1); display: flex;
                      align-items: center; justify-content: center; color: #8E44AD;",
             icon("users", style = "font-size: 12px;")
           ),
           div(
-            style = "font-size: 13px; font-weight: 600; color: #2d3748; 
+            style = "font-size: 13px; font-weight: 600; color: #2d3748;
                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
             local_name
           ),
@@ -794,6 +780,7 @@ observe({
             p(style = "font-size: 11px; margin-top: 6px;", "Calculating...")
           )
         } else {
+          scores <- clean_persona_scores(scores)
           main  <- scores %>% filter(main_brand_flag == TRUE)
           comps <- scores %>% filter(main_brand_flag == FALSE) %>%
             arrange(desc(airr_score))
@@ -803,7 +790,7 @@ observe({
               div(
                 style = "margin-bottom: 10px;",
                 div(
-                  style = "display: flex; justify-content: space-between; 
+                  style = "display: flex; justify-content: space-between;
                            align-items: center; margin-bottom: 4px;",
                   tags$span(
                     style = "font-size: 12px; font-weight: 700; color: #2d3748;",
@@ -811,10 +798,11 @@ observe({
                   ),
                   tags$span(
                     style = paste0("font-size: 18px; font-weight: 800; color: ",
-                                   score_color(main$airr_score[1]), ";"),
-                    round(main$airr_score[1], 1)
+                                   persona_score_color(main$airr_score[1]), ";"),
+                    fmt_persona_score(main$airr_score[1], 1)
                   )
                 ),
+                # Sub-score bar
                 div(
                   style = "display: flex; gap: 4px;",
                   lapply(list(
@@ -826,8 +814,8 @@ observe({
                     div(
                       style = "flex: 1; text-align: center;",
                       div(style = paste0("font-size: 11px; font-weight: 700; color: ",
-                                         score_color(s$v), ";"),
-                          round(s$v, 0)),
+                                         persona_score_color(s$v), ";"),
+                          fmt_persona_score(s$v)),
                       div(style = "font-size: 9px; color: #a0aec0;", s$l)
                     )
                   })
@@ -841,7 +829,7 @@ observe({
               div(
                 lapply(1:nrow(comps), function(j) {
                   div(
-                    style = "display: flex; justify-content: space-between; 
+                    style = "display: flex; justify-content: space-between;
                              align-items: center; padding: 3px 0;",
                     tags$span(
                       style = "font-size: 12px; color: #4a5568; white-space: nowrap;
@@ -850,8 +838,8 @@ observe({
                     ),
                     tags$span(
                       style = paste0("font-size: 14px; font-weight: 700; color: ",
-                                     score_color(comps$airr_score[j]), ";"),
-                      round(comps$airr_score[j], 1)
+                                     persona_score_color(comps$airr_score[j]), ";"),
+                      fmt_persona_score(comps$airr_score[j], 1)
                     )
                   )
                 })
@@ -920,22 +908,17 @@ output$prompt_overview_profiles_section <- renderUI({
       pid   <- profiles$profile_id[i]
       pname <- profiles$profile_name[i]
       
-      is_selected <- !is.null(selected_prompt_profile_id()) && 
+      is_selected <- !is.null(selected_prompt_profile_id()) &&
         selected_prompt_profile_id() == pid
       
       div(
         style = paste0(
           "flex: 1; min-width: 200px; cursor: pointer; border-radius: 12px; ",
           "transition: all 0.2s ease; ",
-          if (is_selected) {
-            "outline: 3px solid #8E44AD; outline-offset: 2px;"
-          } else {
-            ""
-          }
+          if (is_selected) "outline: 3px solid #8E44AD; outline-offset: 2px;" else ""
         ),
         onclick = sprintf(
-          "Shiny.setInputValue('prompt_profile_card_click', %d, {priority: 'event'})",
-          pid
+          "Shiny.setInputValue('prompt_profile_card_click', %d, {priority: 'event'})", pid
         ),
         uiOutput(paste0("prompt_overview_profile_card_", pid))
       )
@@ -964,22 +947,19 @@ observe({
     
     output[[paste0("prompt_overview_profile_card_", local_pid)]] <- renderUI({
       scores <- get_profile_query_scores(rv$login_id, local_pid, query_string)
-      
-      score_color <- function(val) {
-        if (is.na(val) || is.null(val)) return("#cbd5e0")
-        if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
-      }
+      scores <- clean_persona_scores(scores)
       
       div(
         style = "background: white; border-radius: 12px; padding: 16px;
                  border: 1px solid #e2e8f0; border-top: 3px solid #8E44AD;
                  transition: all 0.2s ease;",
         
+        # Header
         div(
           style = "display: flex; align-items: center; gap: 8px; margin-bottom: 14px;",
           div(
-            style = "width: 28px; height: 28px; border-radius: 8px; 
-                     background: rgba(142,68,173,0.1); display: flex; 
+            style = "width: 28px; height: 28px; border-radius: 8px;
+                     background: rgba(142,68,173,0.1); display: flex;
                      align-items: center; justify-content: center; color: #8E44AD;",
             icon("users", style = "font-size: 12px;")
           ),
@@ -1002,6 +982,7 @@ observe({
             p(style = "font-size: 11px; margin-top: 6px;", "Calculating...")
           )
         } else {
+          scores <- clean_persona_scores(scores)
           main  <- scores %>% filter(main_brand_flag == TRUE)
           comps <- scores %>% filter(main_brand_flag == FALSE) %>%
             arrange(desc(airr_score))
@@ -1011,7 +992,7 @@ observe({
               div(
                 style = "margin-bottom: 10px;",
                 div(
-                  style = "display: flex; justify-content: space-between; 
+                  style = "display: flex; justify-content: space-between;
                            align-items: center; margin-bottom: 4px;",
                   tags$span(
                     style = "font-size: 12px; font-weight: 700; color: #2d3748;",
@@ -1019,8 +1000,8 @@ observe({
                   ),
                   tags$span(
                     style = paste0("font-size: 18px; font-weight: 800; color: ",
-                                   score_color(main$airr_score[1]), ";"),
-                    round(main$airr_score[1], 1)
+                                   persona_score_color(main$airr_score[1]), ";"),
+                    fmt_persona_score(main$airr_score[1], 1)
                   )
                 ),
                 div(
@@ -1034,8 +1015,8 @@ observe({
                     div(
                       style = "flex: 1; text-align: center;",
                       div(style = paste0("font-size: 11px; font-weight: 700; color: ",
-                                         score_color(s$v), ";"),
-                          round(s$v, 0)),
+                                         persona_score_color(s$v), ";"),
+                          fmt_persona_score(s$v)),
                       div(style = "font-size: 9px; color: #a0aec0;", s$l)
                     )
                   })
@@ -1049,7 +1030,7 @@ observe({
               div(
                 lapply(1:nrow(comps), function(j) {
                   div(
-                    style = "display: flex; justify-content: space-between; 
+                    style = "display: flex; justify-content: space-between;
                              align-items: center; padding: 3px 0;",
                     tags$span(
                       style = "font-size: 12px; color: #4a5568; white-space: nowrap;
@@ -1058,8 +1039,8 @@ observe({
                     ),
                     tags$span(
                       style = paste0("font-size: 14px; font-weight: 700; color: ",
-                                     score_color(comps$airr_score[j]), ";"),
-                      round(comps$airr_score[j], 1)
+                                     persona_score_color(comps$airr_score[j]), ";"),
+                      fmt_persona_score(comps$airr_score[j], 1)
                     )
                   )
                 })
@@ -1076,18 +1057,12 @@ observe({
 # Navigation helpers
 # ============================================
 
-observeEvent(input$upgrade_from_brand_profiles, {
-  shinyjs::click("upgrade_btn")
-})
-
-observeEvent(input$upgrade_from_prompt_profiles, {
-  shinyjs::click("upgrade_btn")
-})
+observeEvent(input$upgrade_from_brand_profiles,  { shinyjs::click("upgrade_btn") })
+observeEvent(input$upgrade_from_prompt_profiles, { shinyjs::click("upgrade_btn") })
 
 observeEvent(input$manage_profiles_from_brand2, {
   updateTabItems(session, "sidebar", "profiles")
 })
-
 observeEvent(input$manage_profiles_from_prompt2, {
   updateTabItems(session, "sidebar", "profiles")
 })
@@ -1119,10 +1094,10 @@ get_profile_brand_scores <- function(login_id, profile_id) {
       GROUP BY brand_id
     )
     SELECT fpbh.brand_id, fpbh.airr_score, fpbh.presence_score,
-           fpbh.perception_score, fpbh.prestige_score, 
+           fpbh.perception_score, fpbh.prestige_score,
            fpbh.persistence_score, fpbh.date
     FROM fact_profile_brand_history fpbh
-    INNER JOIN latest l 
+    INNER JOIN latest l
       ON fpbh.brand_id = l.brand_id AND fpbh.date = l.latest_date
     WHERE fpbh.profile_id = $1
   ", placeholders), params = as.list(c(profile_id, brand_ids)))
@@ -1130,8 +1105,7 @@ get_profile_brand_scores <- function(login_id, profile_id) {
   if (nrow(scores) == 0) return(NULL)
   
   scores %>%
-    left_join(brands %>% select(brand_id, brand_name, main_brand_flag),
-              by = "brand_id")
+    left_join(brands %>% select(brand_id, brand_name, main_brand_flag), by = "brand_id")
 }
 
 get_profile_brand_timeseries <- function(login_id, profile_id) {
@@ -1160,8 +1134,7 @@ get_profile_brand_timeseries <- function(login_id, profile_id) {
   if (nrow(ts) == 0) return(NULL)
   
   ts %>%
-    left_join(brands %>% select(brand_id, brand_name, main_brand_flag),
-              by = "brand_id")
+    left_join(brands %>% select(brand_id, brand_name, main_brand_flag), by = "brand_id")
 }
 
 # ============================================
@@ -1207,8 +1180,7 @@ get_profile_query_scores <- function(login_id, profile_id, query_string) {
   if (nrow(scores) == 0) return(NULL)
   
   scores %>%
-    left_join(brands %>% select(brand_id, brand_name, main_brand_flag),
-              by = "brand_id")
+    left_join(brands %>% select(brand_id, brand_name, main_brand_flag), by = "brand_id")
 }
 
 get_profile_query_timeseries <- function(login_id, profile_id, query_string) {
@@ -1240,8 +1212,7 @@ get_profile_query_timeseries <- function(login_id, profile_id, query_string) {
   if (nrow(ts) == 0) return(NULL)
   
   ts %>%
-    left_join(brands %>% select(brand_id, brand_name, main_brand_flag),
-              by = "brand_id")
+    left_join(brands %>% select(brand_id, brand_name, main_brand_flag), by = "brand_id")
 }
 
 # ============================================
@@ -1257,36 +1228,52 @@ create_profile_dash_chart <- function(data, score_col, y_title, main_brand_name)
                     "#E67E22", "#1ABC9C", "#34495E", "#16A085",
                     "#C0392B", "#2980B9")
   
+  latest_by_brand <- data %>%
+    group_by(brand_name) %>%
+    filter(date == max(date)) %>%
+    ungroup() %>%
+    arrange(desc(.data[[score_col]])) %>%
+    mutate(rank = row_number())
+  
+  top4_brands <- latest_by_brand %>% filter(rank <= 4) %>% pull(brand_name)
+  
   p <- plot_ly()
   
   if (nrow(comp_data) > 0) {
     comp_brands <- unique(comp_data$brand_name)
     for (idx in seq_along(comp_brands)) {
-      bn  <- comp_brands[idx]
-      bd  <- comp_data %>% filter(brand_name == bn)
-      col <- comp_colours[((idx - 1) %% length(comp_colours)) + 1]
+      bn      <- comp_brands[idx]
+      bd      <- comp_data %>% filter(brand_name == bn)
+      col     <- comp_colours[((idx - 1) %% length(comp_colours)) + 1]
+      is_top4 <- bn %in% top4_brands
       
       p <- p %>% add_trace(
         data = bd, x = ~date, y = as.formula(paste0("~", score_col)),
-        type = 'scatter', mode = 'lines+markers',
-        name = bn,
-        line   = list(width = 2, dash = "dot", shape = "spline", color = col),
+        type = 'scatter', mode = 'lines+markers', name = bn,
+        line = list(width = 2, dash = if (is_top4) "solid" else "dot",
+                    shape = "spline", color = col),
         marker = list(size = 4, color = col),
         opacity = 0.7,
-        hovertemplate = paste0('<b>', bn, '</b><br>%{y:.1f}<extra></extra>')
+        hovertemplate = paste0(
+          "<b>", bn, "</b><br>%{x|%d %b %Y}<br>",
+          y_title, ": <b>%{y:.1f}</b><extra></extra>")
       )
     }
   }
   
   if (nrow(main_data) > 0) {
+    is_top4 <- main_brand_name %in% top4_brands
     p <- p %>% add_trace(
       data = main_data, x = ~date, y = as.formula(paste0("~", score_col)),
       type = 'scatter', mode = 'lines+markers',
       name = paste0("★ ", main_brand_name),
-      line   = list(width = 3.5, color = '#8E44AD', shape = "spline"),
+      line = list(width = 3.5, dash = if (is_top4) "solid" else "dot",
+                  color = '#8E44AD', shape = "spline"),
       marker = list(size = 7, color = '#8E44AD',
                     line = list(color = '#1A1A1A', width = 1.5)),
-      hovertemplate = paste0('<b>', main_brand_name, '</b><br>%{y:.1f}<extra></extra>')
+      hovertemplate = paste0(
+        "<b>★ ", main_brand_name, "</b><br>%{x|%d %b %Y}<br>",
+        y_title, ": <b>%{y:.1f}</b><extra></extra>")
     )
   }
   
@@ -1308,15 +1295,14 @@ render_profile_spider <- function(scores, main_brand_name) {
       r = c(comp_data$presence_score[i],   comp_data$perception_score[i],
             comp_data$prestige_score[i],   comp_data$persistence_score[i],
             comp_data$presence_score[i]),
-      theta  = c('Presence', 'Perception', 'Prestige', 'Persistence', 'Presence'),
-      name   = comp_data$brand_name[i],
+      theta     = c('Presence', 'Perception', 'Prestige', 'Persistence', 'Presence'),
+      name      = comp_data$brand_name[i],
       fillcolor = paste0(col, '15'),
-      line   = list(width = 2, color = col),
-      marker = list(size = 5, color = col),
-      opacity = 0.7,
-      hovertemplate = paste0(
-        '<b>', comp_data$brand_name[i], '</b><br>',
-        '%{theta}: %{r:.1f}<extra></extra>')
+      line      = list(width = 2, color = col),
+      marker    = list(size = 5, color = col),
+      opacity   = 0.7,
+      hovertemplate = paste0('<b>', comp_data$brand_name[i], '</b><br>',
+                             '%{theta}: %{r:.1f}<extra></extra>')
     )
   }
   
@@ -1326,39 +1312,31 @@ render_profile_spider <- function(scores, main_brand_name) {
       r = c(main_data$presence_score[1],   main_data$perception_score[1],
             main_data$prestige_score[1],   main_data$persistence_score[1],
             main_data$presence_score[1]),
-      theta  = c('Presence', 'Perception', 'Prestige', 'Persistence', 'Presence'),
-      name   = paste0("★ ", main_brand_name),
+      theta     = c('Presence', 'Perception', 'Prestige', 'Persistence', 'Presence'),
+      name      = paste0("★ ", main_brand_name),
       fillcolor = 'rgba(142, 68, 173, 0.15)',
-      line   = list(width = 3, color = '#8E44AD'),
-      marker = list(size = 8, color = '#8E44AD'),
-      hovertemplate = paste0(
-        '<b>', main_brand_name, '</b><br>',
-        '%{theta}: %{r:.1f}<extra></extra>')
+      line      = list(width = 3, color = '#8E44AD'),
+      marker    = list(size = 8, color = '#8E44AD'),
+      hovertemplate = paste0('<b>', main_brand_name, '</b><br>',
+                             '%{theta}: %{r:.1f}<extra></extra>')
     )
   }
   
   p %>% layout(
     polar = list(
-      radialaxis = list(
-        visible = TRUE, range = c(0, 100),
-        showline = FALSE, showticklabels = TRUE,
-        gridcolor = "rgba(0,0,0,0.06)",
-        tickfont = list(size = 10, color = "#9E9E9E", family = "Inter")
-      ),
-      angularaxis = list(
-        showline = FALSE,
-        gridcolor = "rgba(0,0,0,0.06)",
-        tickfont = list(size = 12, color = "#4a5568", family = "Inter")
-      ),
+      radialaxis = list(visible = TRUE, range = c(0, 100),
+                        showline = FALSE, showticklabels = TRUE,
+                        gridcolor = "rgba(0,0,0,0.06)",
+                        tickfont = list(size = 10, color = "#9E9E9E", family = "Inter")),
+      angularaxis = list(showline = FALSE, gridcolor = "rgba(0,0,0,0.06)",
+                         tickfont = list(size = 12, color = "#4a5568", family = "Inter")),
       bgcolor = "rgba(0,0,0,0)"
     ),
     showlegend = TRUE,
-    legend = list(
-      orientation = "h", yanchor = "top", y = -0.15,
-      xanchor = "center", x = 0.5,
-      font = list(size = 11, color = "#9E9E9E", family = "Inter"),
-      bgcolor = "rgba(0,0,0,0)"
-    ),
+    legend = list(orientation = "h", yanchor = "top", y = -0.15,
+                  xanchor = "center", x = 0.5,
+                  font = list(size = 11, color = "#9E9E9E", family = "Inter"),
+                  bgcolor = "rgba(0,0,0,0)"),
     paper_bgcolor = "rgba(0,0,0,0)",
     margin = list(l = 60, r = 60, t = 30, b = 50),
     font = list(family = "Inter")
@@ -1380,3 +1358,4 @@ plotly_empty_state <- function(message = "No data available") {
     ) %>%
     config(displayModeBar = FALSE)
 }
+

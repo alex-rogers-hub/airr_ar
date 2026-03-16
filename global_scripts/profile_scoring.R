@@ -81,12 +81,13 @@ score_profile <- function(con, login_id, profile_id, model = "gpt-4o-mini") {
             brand_id       = bid,
             brand_name     = brand_name,
             profile_id     = profile_id,
-            login_id       = login_id,   # <-- was missing
+            login_id       = login_id,
             query_id       = qid,
             query_string   = qstring,
             prefix         = prefix,
             brand_reach    = reach,
             reach_country  = country,
+            reach_region   = region,    # was missing
             reach_postcode = postcode,
             model          = model
           )
@@ -104,7 +105,7 @@ score_profile <- function(con, login_id, profile_id, model = "gpt-4o-mini") {
 
 
 score_profile_brand <- function(con, brand_id, brand_name, profile_id,
-                                login_id,              # <-- added
+                                login_id,
                                 prefix,
                                 brand_reach    = "global",
                                 reach_country  = NULL,
@@ -116,21 +117,51 @@ score_profile_brand <- function(con, brand_id, brand_name, profile_id,
   reach_str     <- if (nzchar(reach_context)) paste0(" in ", reach_context) else ""
   near_me_str   <- build_near_me_suffix(brand_reach, reach_country, reach_postcode)
   
+  # Pull industry for this brand/user — used to suffix presence queries
+  industry <- tryCatch({
+    result <- dbGetQuery(con,
+                         "SELECT industry FROM fact_user_brands_tracked
+       WHERE login_id = $1
+         AND brand_id = $2
+         AND date_valid_from <= CURRENT_DATE
+         AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)
+       LIMIT 1",
+                         params = list(login_id, brand_id))
+    if (nrow(result) > 0 && !is.na(result$industry[1])) result$industry[1] else NULL
+  }, error = function(e) NULL)
+  
+  has_industry <- !is.null(industry) && nzchar(industry)
+  industry_str <- if (has_industry) industry else "their industry"
+  
+  # Location suffix — near_me uses suffix, national/regional uses prefix
+  loc_str <- if (nzchar(near_me_str)) near_me_str else reach_str
+  
   reps <- 10
   
+  # Presence queries — industry-suffixed, identical pattern to all_queries()
   presence_prompts <- c(
-    rep(paste0(prefix, "What is the best brand for me in this category", reach_str, "?"), reps),
-    rep(paste0(prefix, "Which brand would you recommend for someone like me", reach_str, "?"), reps),
-    rep(paste0(prefix, "What brand should I choose", reach_str, "?"), reps),
-    rep(paste0(prefix, "Which company is most relevant to my needs", reach_str, "?"), reps),
-    rep(paste0(prefix, "What are the top brands for people like me",
-               if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps)
+    rep(paste0(prefix,
+               'What are the best brands in the ', industry_str, ' industry', loc_str, '?'),
+        reps),
+    rep(paste0(prefix,
+               'What are the top brands in ', industry_str, loc_str, '?'),
+        reps),
+    rep(paste0(prefix,
+               'Which companies lead the ', industry_str, ' industry', loc_str, '?'),
+        reps),
+    rep(paste0(prefix,
+               'Recommend some ', industry_str, ' brands', loc_str),
+        reps),
+    rep(paste0(prefix,
+               'What are popular ', industry_str, ' companies', loc_str, '?'),
+        reps)
   )
   
+  # Perception queries — brand-specific, reach-suffixed, no industry
   perception_prompts <- c(
-    rep(paste0(prefix, "Tell me about ", brand_name, reach_str), reps),
-    rep(paste0(prefix, "Is ", brand_name, " a good choice for someone like me", reach_str, "?"), reps),
-    rep(paste0(prefix, "What do people like me think of ", brand_name, reach_str, "?"), reps)
+    rep(paste0(prefix, 'Tell me about ', brand_name, reach_str),                              reps),
+    rep(paste0(prefix, 'Is ', brand_name, ' a good choice for someone like me', reach_str, '?'), reps),
+    rep(paste0(prefix, 'What do people like me think of ', brand_name, reach_str, '?'),        reps)
   )
   
   all_prompts <- c(presence_prompts, perception_prompts)
@@ -164,13 +195,12 @@ score_profile_brand <- function(con, brand_id, brand_name, profile_id,
   sentiment_result    <- analyze_sentiment_weighted(all_perception_text)
   perception_score    <- sentiment_result$score
   
-  # FIX: pass con and login_id correctly
   prestige_score <- calculate_prestige_from_prompts_sep(
-    brand_name     = brand_name,
-    brand_id       = brand_id,
-    login_id       = login_id,
-    rel_responses  = all_presence_responses,
-    db_con            = con
+    brand_name    = brand_name,
+    brand_id      = brand_id,
+    login_id      = login_id,
+    rel_responses = all_presence_responses,
+    db_con        = con
   )
   
   presence_history <- dbGetQuery(con,
@@ -207,38 +237,45 @@ score_profile_brand <- function(con, brand_id, brand_name, profile_id,
     presence_score, perception_score, prestige_score, persistence_score, airr_score
   ))
   
-  message(sprintf("    ✓ Brand %s scored for profile %d", brand_name, profile_id))
+  message(sprintf("    \u2713 Brand %s scored for profile %d", brand_name, profile_id))
 }
 
 
 score_profile_prompt <- function(con, brand_id, brand_name, profile_id,
-                                 login_id,              # <-- added
+                                 login_id,
                                  query_id, query_string, prefix,
                                  brand_reach    = "global",
                                  reach_country  = NULL,
+                                 reach_region   = NULL,          # was missing
                                  reach_postcode = NULL,
                                  model          = "gpt-4o-mini") {
   
-  query_resolved  <- inject_near_me_location(query_string, brand_reach, reach_country, reach_postcode)
+  # Resolve location in prompt — NO industry suffix for prompt scores
+  query_resolved  <- inject_near_me_location(
+    query_string,
+    brand_reach,
+    reach_country,
+    reach_region,       # now passed through
+    reach_postcode
+  )
+  
   profiled_prompt <- paste0(prefix, query_resolved)
   
   query_list    <- rep(profiled_prompt, 10)
   rel_responses <- prompt_queries(query_list, model = model)
   
-  presence_score   <- presence_prompt_calc(brand_name, rel_responses)
+  presence_score <- presence_prompt_calc(brand_name, rel_responses)
   
-  # FIX: pass con and login_id correctly
-  prestige_score   <- calculate_prestige_from_prompts_sep(
+  prestige_score <- calculate_prestige_from_prompts_sep(
     brand_name    = brand_name,
     brand_id      = brand_id,
     login_id      = login_id,
     rel_responses = rel_responses,
-    db_con           = con
+    db_con        = con
   )
   
   perception_score <- calculate_perception_from_prompts_sep(
-    brand_name, brand_id, rel_responses
-  )
+    brand_name, brand_id, rel_responses)
   
   presence_history <- dbGetQuery(con,
                                  "SELECT date, presence_score FROM fact_profile_query_history
@@ -274,6 +311,8 @@ score_profile_prompt <- function(con, brand_id, brand_name, profile_id,
     presence_score, perception_score, prestige_score, persistence_score, airr_score
   ))
   
-  message(sprintf("    ✓ Prompt %d scored for brand %s, profile %d",
+  message(sprintf("    \u2713 Prompt %d scored for brand %s, profile %d",
                   query_id, brand_name, profile_id))
 }
+
+

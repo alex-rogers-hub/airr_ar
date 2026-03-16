@@ -56,5 +56,12 @@ tab_account <- tabItem(
       hr(style = "margin: 12px 0; border-color: #f0f0f0;"),
       uiOutput("account_query_list")
     )
+  ),
+  # API Access — Enterprise only
+  fluidRow(
+    column(
+      width = 12,
+      uiOutput("account_api_section")
+    )
   )
 )

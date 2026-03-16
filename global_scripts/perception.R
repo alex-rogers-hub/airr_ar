@@ -887,7 +887,7 @@ calculate_perception_from_prompts_sep <- function(brand_name,
     #   )
     # ))
     
-    return(50)
+    return(0)
   }
   
   # --- SENTIMENT SCORE ---
@@ -922,7 +922,7 @@ calculate_perception_from_prompts_sep <- function(brand_name,
     unlist()
   
   if (length(all_contexts) < 2) {
-    accuracy_score <- 50  # Neutral default
+    accuracy_score <- 0  # Neutral default
     accuracy_interpretation <- "Insufficient context for accuracy measurement"
   } else {
     # Measure text consistency across contexts

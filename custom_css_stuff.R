@@ -1029,4 +1029,29 @@ body.admin-bar-visible .right-side {
   opacity: 1 !important;
 }
 
+#sidebar_brand_card {
+  padding: 0 4px;
+}
+
+.main-sidebar,
+.left-side {
+  position: fixed !important;
+  height: 100vh !important;
+  overflow: hidden !important;
+}
+
+.sidebar {
+  overflow: hidden !important;
+  height: calc(100vh - 50px) !important;
+}
+
+
+/* ── Sidebar sticky scores ──────────────────────────────────── */
+#sidebar_sticky_scores {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.3s ease;
+}
+
+
 ")

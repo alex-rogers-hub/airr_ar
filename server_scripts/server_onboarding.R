@@ -90,7 +90,7 @@ output$setup_time_estimate_ui <- renderUI({
     div(
       style = "margin-top: 10px; font-size: 11px; color: #a0aec0; line-height: 1.5;",
       icon("info-circle", style = "margin-right: 4px;"),
-      "Scores calculate in the background — you'll see spinners on your dashboard 
+      "Scores calculate in the background, you'll see spinners on your dashboard 
        and results will appear automatically as they complete. 
        You don't need to keep this page open."
     )
@@ -265,7 +265,7 @@ onboarding_step2_ui <- function() {
           ),
           p(
             style = "font-size: 12px; color: #a0aec0; margin-bottom: 8px;",
-            "Be specific — e.g. 'The State of New York', 'Houston Texas', ",
+            "Be specific, e.g. 'The State of New York', 'Houston Texas', ",
             "'East Coast USA', 'South West England', 'Greater London'"
           ),
           textInput(
@@ -500,7 +500,7 @@ onboarding_step3_ui <- function() {
     div(
       class = "login-header",
       h2("What industry are you in?"),
-      p("We've looked this up based on your brand — feel free to edit it.")
+      p("We've looked this up based on your brand, feel free to edit it.")
     ),
     div(
       class = "login-body",
@@ -521,7 +521,7 @@ onboarding_step3_ui <- function() {
         ),
         p(
           style = "font-size: 12px; color: #718096; margin-bottom: 10px; line-height: 1.5;",
-          "Be as specific as possible — a niche description gives much more meaningful scores
+          "Be as specific as possible, a niche description gives much more meaningful scores
            than a broad category. Examples:"
         ),
         div(
@@ -661,20 +661,7 @@ output$industry_field_ui <- renderUI({
     ))
   }
   
-  # Check if user already has scores and presence is zero
-  # (only relevant if they've gone back to edit after initial setup)
-  has_zero_presence <- tryCatch({
-    if (is.null(rv$login_id) || is.null(rv$brand_id)) return(FALSE)
-    result <- dbGetQuery(pool, "
-      SELECT COALESCE(AVG(overall_score), -1) as avg_presence
-      FROM fact_presence_history
-      WHERE login_id = $1
-        AND date >= CURRENT_DATE - INTERVAL '7 days'",
-                         params = list(rv$login_id))
-    score <- result$avg_presence[1]
-    !is.na(score) && score >= 0 && score < 5
-  }, error = function(e) FALSE)
-  
+  # Never check presence scores during onboarding — user has none yet
   tagList(
     div(
       tags$label(
@@ -691,62 +678,24 @@ output$industry_field_ui <- renderUI({
       ),
       p(style = "font-size: 12px; color: #a0aec0; margin-top: 4px;",
         "Edit this if it doesn't look right.")
-    ),
-    
-    # Zero presence warning — only shown if they have existing scores near zero
-    if (has_zero_presence) {
-      div(
-        style = "background: rgba(231,76,60,0.06);
-                 border: 1px solid rgba(231,76,60,0.3);
-                 border-radius: 10px; padding: 12px 16px; margin-top: 12px;",
-        div(
-          style = "display: flex; align-items: flex-start; gap: 10px;",
-          icon("triangle-exclamation",
-               style = "color: #E74C3C; font-size: 16px; flex-shrink: 0; margin-top: 2px;"),
-          div(
-            div(
-              style = "font-weight: 600; font-size: 13px; color: #C0392B; 
-                       margin-bottom: 4px;",
-              "Your Presence score is very low"
-            ),
-            p(
-              style = "font-size: 12px; color: #718096; margin: 0; line-height: 1.5;",
-              "This usually means the industry description is too broad for AI models
-               to reliably associate your brand with it. Try making it more specific."
-            ),
-            div(
-              style = "margin-top: 8px; font-size: 12px; color: #718096;",
-              tags$span(style = "font-weight: 600; color: #C0392B;", "Too broad: "),
-              tags$span(
-                style = "text-decoration: line-through; color: #a0aec0;",
-                onboarding_data$industry %||% "your current industry"
-              )
-            ),
-            div(
-              style = "margin-top: 4px; font-size: 12px; color: #718096;",
-              tags$span(style = "font-weight: 600; color: #27AE60;", "Try instead: "),
-              tags$span(
-                style = "color: #27AE60; font-style: italic;",
-                "add your specific product category or service type"
-              )
-            )
-          )
-        )
-      )
-    }
+    )
   )
 })
 
 observeEvent(input$ob_step3_back, { onboarding_step(2) })
 
 observeEvent(input$ob_step3_next, {
-  industry <- trimws(input$ob_industry)
+  
+  # Guard against industry field not yet rendered
+  industry <- trimws(input$ob_industry %||% "")
+  
   if (nchar(industry) < 2) {
     output$step3_alert <- renderUI({
       div(class = "alert alert-danger", "Please enter your industry.")
     })
     return()
   }
+  
   onboarding_data$industry <- industry
   competitor_lookup_trigger(competitor_lookup_trigger() + 1)
   onboarding_step(4)
@@ -768,7 +717,7 @@ onboarding_step4_ui <- function() {
     div(
       class = "login-header",
       h2("Who are your competitors?"),
-      p("We've suggested the top competitors — remove any that aren't relevant, or add your own.")
+      p("We've suggested the top competitors, remove any that aren't relevant, or add your own.")
     ),
     div(
       class = "login-body",
@@ -908,7 +857,7 @@ output$competitor_selection_ui <- renderUI({
       "Select competitors to track"
     ),
     p(style = "font-size: 12px; color: #a0aec0; margin-bottom: 12px;",
-      paste0(length(selected), " selected — click to toggle")),
+      paste0(length(selected), " selected, click to toggle")),
     
     div(
       style = "display: flex; flex-wrap: wrap; gap: 8px;",
@@ -983,7 +932,7 @@ onboarding_step5_ui <- function() {
     div(
       class = "login-header",
       h2("What are people searching for?"),
-      p("These are prompts your brand would want to appear in — select the ones most relevant to you.")
+      p("These are prompts your brand would want to appear in, select the ones most relevant to you or choose your own.")
     ),
     div(
       class = "login-body",
@@ -1144,7 +1093,7 @@ output$prompt_selection_ui <- renderUI({
     ),
     p(style = "font-size: 12px; color: #a0aec0; margin-bottom: 12px;",
       paste0(length(selected), " of ", length(all_prompts),
-             " selected — click to toggle")),
+             " selected, click to toggle")),
     
     div(
       style = "display: flex; flex-direction: column; gap: 8px;",
@@ -1265,7 +1214,7 @@ onboarding_step6_ui <- function() {
         style = "font-weight: 600; font-size: 12px; color: #718096;
                  text-transform: uppercase; letter-spacing: 0.5px;
                  margin-bottom: 10px; display: block;",
-        "Standard personas — click to add"
+        "Standard personas, click to add"
       ),
       uiOutput("ob_persona_cards_ui"),
       
@@ -1293,7 +1242,7 @@ onboarding_step6_ui <- function() {
         id          = "ob_custom_persona_desc",
         class       = "form-control",
         rows        = 3,
-        placeholder = "Describe in first person — e.g. 'I am a...'",
+        placeholder = "Describe in first person, e.g. 'I am a...'",
         style       = "font-size: 13px; resize: vertical; margin-bottom: 8px;"
       ),
       actionButton(
@@ -1451,7 +1400,7 @@ output$ob_selected_personas_ui <- renderUI({
                border: 1px dashed #e2e8f0; border-radius: 10px;",
       icon("users", style = "margin-bottom: 6px; color: #e2e8f0; font-size: 20px;"),
       p(style = "margin: 0; font-size: 13px;",
-        "No personas selected yet — add some above or skip this step.")
+        "No personas selected yet, add some above or skip this step.")
     ))
   }
   

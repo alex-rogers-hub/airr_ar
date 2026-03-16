@@ -3,6 +3,9 @@ tab_brand_overview <- tabItem(
   
   # Score Cards
   uiOutput("dash_score_cards_row"),
+  # Invisible sentinel — JS watches this to know when cards are off-screen
+  div(id = "score_cards_sentinel", style = "height: 1px; margin: 0; padding: 0;"),
+  
   br(),
   
   # Performance Overview: Trend chart + Compact Rankings side by side

@@ -1053,3 +1053,190 @@ estimate_rescore_time <- function(login_id) {
     )
   )
 }
+
+#' Update brand reach for all of a user's brands
+update_user_brand_reach <- function(login_id, brand_reach, 
+                                    reach_country  = NULL,
+                                    reach_region   = NULL,
+                                    reach_postcode = NULL) {
+  tryCatch({
+    
+    # Clean up empty strings to NULL
+    if (!is.null(reach_country)  && !nzchar(reach_country))  reach_country  <- NULL
+    if (!is.null(reach_region)   && !nzchar(reach_region))   reach_region   <- NULL
+    if (!is.null(reach_postcode) && !nzchar(reach_postcode)) reach_postcode <- NULL
+    
+    # Update fact_user_brands_tracked for all active brands
+    dbExecute(pool, "
+      UPDATE fact_user_brands_tracked
+      SET brand_reach = $1
+      WHERE login_id = $2
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+              params = list(brand_reach, login_id))
+    
+    # Update dim_brand for all brands this user tracks
+    brand_ids <- dbGetQuery(pool, "
+      SELECT DISTINCT brand_id
+      FROM fact_user_brands_tracked
+      WHERE login_id = $1
+        AND date_valid_from <= CURRENT_DATE
+        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
+                            params = list(login_id))$brand_id
+    
+    if (length(brand_ids) > 0) {
+      placeholders <- paste0("$", seq_along(brand_ids) + 4, collapse = ", ")
+      dbExecute(pool,
+                sprintf("UPDATE dim_brand 
+                 SET brand_reach    = $1,
+                     reach_country  = $2,
+                     reach_region   = $3,
+                     reach_postcode = $4
+                 WHERE brand_id IN (%s)", placeholders),
+                params = as.list(c(
+                  brand_reach,
+                  reach_country  %||% NA,
+                  reach_region   %||% NA,
+                  reach_postcode %||% NA,
+                  brand_ids
+                )))
+    }
+    
+    return(list(success = TRUE, brand_ids = brand_ids))
+    
+  }, error = function(e) {
+    warning(paste("Error updating reach:", e$message))
+    return(list(success = FALSE, brand_ids = c()))
+  })
+}
+
+#' Format reach for display
+#' e.g. "National — United Kingdom" or "Near Me — SW1A 1AA, UK"
+format_reach_display <- function(brand_reach, reach_country = NULL,
+                                 reach_region = NULL, reach_postcode = NULL) {
+  if (is.null(brand_reach) || is.na(brand_reach) || brand_reach == "global") {
+    return("Global")
+  }
+  
+  label <- switch(brand_reach,
+                  "national" = "National",
+                  "regional" = "Regional",
+                  "near_me"  = "Near Me",
+                  "Global"
+  )
+  
+  detail <- switch(brand_reach,
+                   "national" = if (!is.null(reach_country) && !is.na(reach_country) && 
+                                    nzchar(reach_country)) reach_country else NULL,
+                   "regional" = if (!is.null(reach_region)  && !is.na(reach_region)  && 
+                                    nzchar(reach_region))  reach_region  else NULL,
+                   "near_me"  = {
+                     parts <- c()
+                     if (!is.null(reach_postcode) && !is.na(reach_postcode) && nzchar(reach_postcode))
+                       parts <- c(parts, reach_postcode)
+                     if (!is.null(reach_country)  && !is.na(reach_country)  && nzchar(reach_country))
+                       parts <- c(parts, reach_country)
+                     if (length(parts) > 0) paste(parts, collapse = ", ") else NULL
+                   },
+                   NULL
+  )
+  
+  if (!is.null(detail)) paste0(label, " \u2014 ", detail) else label
+}
+
+# ============================================
+# API Key helpers
+# ============================================
+
+#' Generate a new API key for a user
+generate_api_key <- function(login_id, key_name = "Default") {
+  
+  # Check enterprise subscription
+  sub <- get_user_subscription(login_id)
+  if (sub$subscription_name != "Enterprise") {
+    return(list(success = FALSE, message = "API access is an Enterprise feature."))
+  }
+  
+  # Limit to 5 active keys per user
+  existing <- dbGetQuery(pool, "
+    SELECT COUNT(*) as cnt FROM dim_api_keys
+    WHERE login_id = $1 AND is_active = TRUE",
+                         params = list(login_id))
+  
+  if (existing$cnt >= 5) {
+    return(list(success = FALSE, 
+                message = "Maximum of 5 active API keys reached. Revoke one first."))
+  }
+  
+  # Generate a secure key: "airr_" + 48 random hex chars
+  raw     <- paste0(sample(c(letters, LETTERS, 0:9), 48, replace = TRUE), 
+                    collapse = "")
+  api_key <- paste0("airr_", raw)
+  
+  tryCatch({
+    dbExecute(pool, "
+      INSERT INTO dim_api_keys (login_id, api_key, key_name, date_created)
+      VALUES ($1, $2, $3, CURRENT_DATE)",
+              params = list(login_id, api_key, key_name))
+    
+    return(list(success = TRUE, api_key = api_key))
+  }, error = function(e) {
+    return(list(success = FALSE, message = paste("Error:", e$message)))
+  })
+}
+
+#' Revoke an API key
+revoke_api_key <- function(login_id, api_key_id) {
+  tryCatch({
+    rows <- dbExecute(pool, "
+      UPDATE dim_api_keys
+      SET is_active = FALSE, date_revoked = NOW()
+      WHERE api_key_id = $1 AND login_id = $2 AND is_active = TRUE",
+                      params = list(api_key_id, login_id))
+    
+    return(rows > 0)
+  }, error = function(e) {
+    return(FALSE)
+  })
+}
+
+#' Get all active API keys for a user (never returns the key itself after creation)
+get_user_api_keys <- function(login_id) {
+  dbGetQuery(pool, "
+    SELECT api_key_id, key_name, date_created, date_last_used,
+           LEFT(api_key, 12) || '...' as key_preview
+    FROM dim_api_keys
+    WHERE login_id = $1 AND is_active = TRUE
+    ORDER BY date_created DESC",
+             params = list(login_id))
+}
+
+#' Validate an API key and return login_id + check enterprise
+#' Used by the Plumber API
+validate_api_key <- function(api_key, con) {
+  result <- dbGetQuery(con, "
+    SELECT k.login_id, k.api_key_id, u.email,
+           ds.subscription_name
+    FROM dim_api_keys k
+    JOIN dim_user u ON u.login_id = k.login_id
+    JOIN fact_user_sub_level fus ON fus.login_id = k.login_id
+      AND fus.date_valid_from <= CURRENT_DATE
+      AND fus.date_valid_to >= CURRENT_DATE
+    JOIN dim_subscription ds 
+      ON ds.subscription_level_id = fus.subscription_level_id
+    WHERE k.api_key = $1
+      AND k.is_active = TRUE",
+                       params = list(api_key))
+  
+  if (nrow(result) == 0) return(NULL)
+  if (result$subscription_name[1] != "Enterprise") return(NULL)
+  
+  # Update last used timestamp
+  dbExecute(con, "
+    UPDATE dim_api_keys SET date_last_used = NOW()
+    WHERE api_key_id = $1",
+            params = list(result$api_key_id[1]))
+  
+  return(result)
+}
+

@@ -2718,3 +2718,70 @@ for (lid in inactive_login_ids) {
   message(sprintf("✓ Deactivated login_id %d", lid))
 }
 
+
+
+
+
+
+dbGetQuery(pool, "
+  SELECT uqt.login_id, u.email, dq.query_string
+  FROM fact_user_queries_tracked uqt
+  JOIN dim_user u ON u.login_id = uqt.login_id
+  JOIN dim_query dq ON dq.query_id = uqt.query_id
+  WHERE uqt.query_id = 233
+    AND uqt.date_valid_from <= CURRENT_DATE
+    AND (uqt.date_valid_to IS NULL OR uqt.date_valid_to > CURRENT_DATE)
+")
+
+dbGetQuery(pool, "
+  SELECT DISTINCT b.brand_id, b.brand_name, ubt.login_id,
+         uqt.query_id
+  FROM fact_user_queries_tracked uqt
+  JOIN fact_user_brands_tracked ubt ON uqt.login_id = ubt.login_id
+  JOIN dim_brand b ON b.brand_id = ubt.brand_id
+  WHERE uqt.query_id = 233
+    AND uqt.date_valid_from <= CURRENT_DATE
+    AND (uqt.date_valid_to IS NULL OR uqt.date_valid_to > CURRENT_DATE)
+    AND ubt.date_valid_from <= CURRENT_DATE
+    AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to > CURRENT_DATE)
+  ORDER BY ubt.login_id, b.brand_name
+")
+
+brands_for_query <- dbGetQuery(pool, "
+  SELECT DISTINCT b.brand_id, b.brand_name,
+         b.brand_reach, b.reach_country, b.reach_region, b.reach_postcode,
+         ubt.login_id
+  FROM fact_user_queries_tracked uqt
+  JOIN fact_user_brands_tracked ubt ON uqt.login_id = ubt.login_id
+  JOIN dim_brand b ON b.brand_id = ubt.brand_id
+  JOIN dim_brand_query dbq 
+    ON dbq.brand_id = b.brand_id 
+    AND dbq.query_id = uqt.query_id    -- <-- only brands explicitly linked to this query
+  WHERE uqt.query_id = $1
+    AND uqt.date_valid_from <= CURRENT_DATE
+    AND (uqt.date_valid_to IS NULL OR uqt.date_valid_to > CURRENT_DATE)
+    AND ubt.date_valid_from <= CURRENT_DATE
+    AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to > CURRENT_DATE)
+  ORDER BY b.brand_id, ubt.login_id",
+                               params = 233)
+
+
+
+brands_for_query <- dbGetQuery(pool, "
+        SELECT DISTINCT b.brand_id, b.brand_name,
+               b.brand_reach, b.reach_country, b.reach_region, b.reach_postcode,
+               ubt.login_id
+        FROM fact_user_queries_tracked uqt
+        JOIN fact_user_brands_tracked ubt ON uqt.login_id = ubt.login_id
+        JOIN dim_brand b ON b.brand_id = ubt.brand_id
+        WHERE uqt.query_id = $1
+          AND uqt.date_valid_from <= CURRENT_DATE
+          AND (uqt.date_valid_to IS NULL OR uqt.date_valid_to > CURRENT_DATE)
+          AND ubt.date_valid_from <= CURRENT_DATE
+          AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to > CURRENT_DATE)
+        ORDER BY b.brand_id, ubt.login_id",
+                               params = 233)
+
+
+
+airr_UxbinoA8ZHNjjCk2B5QwB8v9RRniAcPM02FC5tRanbZmvYar

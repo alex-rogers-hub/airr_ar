@@ -237,9 +237,13 @@ add_brand_for_user <- function(login_id, brand_name,
 #' Get user's subscription details
 get_user_subscription <- function(login_id) {
   query <- "
-    SELECT fus.*, ds.subscription_name, ds.num_competitors_included
+    SELECT fus.*, ds.subscription_name, 
+           ds.num_competitors_included,
+           ds.num_prompts_included,
+           ds.num_personas_included
     FROM fact_user_sub_level fus
-    JOIN dim_subscription ds ON fus.subscription_level_id = ds.subscription_level_id
+    JOIN dim_subscription ds 
+      ON fus.subscription_level_id = ds.subscription_level_id
     WHERE fus.login_id = $1
       AND fus.date_valid_from <= CURRENT_DATE
       AND fus.date_valid_to >= CURRENT_DATE
@@ -249,21 +253,27 @@ get_user_subscription <- function(login_id) {
   result <- dbGetQuery(pool, query, params = list(login_id))
   
   if (nrow(result) == 0) {
-    # Default free tier: 3 competitor brands
     return(list(
-      subscription_name = "Free",
-      num_competitors_included = 3,
-      extra_competitors_added = 0,
-      max_brands = 3 + 1  # 3 competitors + 1 main brand
+      subscription_name        = "Free",
+      num_competitors_included = 0,
+      num_prompts_included     = 0,
+      num_personas_included    = 0,
+      extra_competitors_added  = 0,
+      extra_prompts_added      = 0,
+      max_brands               = 1
     ))
   }
   
-  return(list(
-    subscription_name = result$subscription_name,
+  list(
+    subscription_name        = result$subscription_name,
     num_competitors_included = result$num_competitors_included,
-    extra_competitors_added = result$extra_competitors_added,
-    max_brands = result$num_competitors_included + result$extra_competitors_added + 1  # +1 for main brand
-  ))
+    num_prompts_included     = result$num_prompts_included,
+    num_personas_included    = result$num_personas_included %||% 0,
+    extra_competitors_added  = result$extra_competitors_added %||% 0,
+    extra_prompts_added      = result$extra_prompts_added %||% 0,
+    max_brands               = result$num_competitors_included + 
+      (result$extra_competitors_added %||% 0) + 1
+  )
 }
 
 #' Get count of user's active brands (excluding main)
@@ -419,9 +429,13 @@ get_user_competitor_brands_with_status <- function(login_id) {
 #' Get user's subscription details (updated with prompt info)
 get_user_subscription <- function(login_id) {
   query <- "
-    SELECT fus.*, ds.subscription_name, ds.num_competitors_included, ds.num_prompts_included
+    SELECT fus.*, ds.subscription_name,
+           ds.num_competitors_included,
+           ds.num_prompts_included,
+           ds.num_personas_included
     FROM fact_user_sub_level fus
-    JOIN dim_subscription ds ON fus.subscription_level_id = ds.subscription_level_id
+    JOIN dim_subscription ds
+      ON fus.subscription_level_id = ds.subscription_level_id
     WHERE fus.login_id = $1
       AND fus.date_valid_from <= CURRENT_DATE
       AND fus.date_valid_to >= CURRENT_DATE
@@ -432,25 +446,31 @@ get_user_subscription <- function(login_id) {
   
   if (nrow(result) == 0) {
     return(list(
-      subscription_name = "Free",
-      num_competitors_included = 1,
-      num_prompts_included = 1,
-      extra_competitors_added = 0,
-      extra_prompts_added = 0,
-      max_brands = 1 + 1,
-      max_prompts = 1
+      subscription_name        = "Free",
+      num_competitors_included = 0,
+      num_prompts_included     = 0,
+      num_personas_included    = 0,
+      extra_competitors_added  = 0,
+      extra_prompts_added      = 0,
+      extra_personas_added     = 0,
+      max_brands               = 1,
+      max_prompts              = 0
     ))
   }
   
-  return(list(
-    subscription_name = result$subscription_name,
+  list(
+    subscription_name        = result$subscription_name,
     num_competitors_included = result$num_competitors_included,
-    num_prompts_included = result$num_prompts_included,
-    extra_competitors_added = result$extra_competitors_added,
-    extra_prompts_added = result$extra_prompts_added,
-    max_brands = result$num_competitors_included + result$extra_competitors_added + 1,
-    max_prompts = result$num_prompts_included + result$extra_prompts_added
-  ))
+    num_prompts_included     = result$num_prompts_included,
+    num_personas_included    = result$num_personas_included %||% 0,
+    extra_competitors_added  = result$extra_competitors_added %||% 0,
+    extra_prompts_added      = result$extra_prompts_added    %||% 0,
+    extra_personas_added     = result$extra_personas_added   %||% 0,
+    max_brands               = result$num_competitors_included +
+      (result$extra_competitors_added %||% 0) + 1,
+    max_prompts              = result$num_prompts_included +
+      (result$extra_prompts_added %||% 0)
+  )
 }
 
 #' Get count of user's active tracked queries
@@ -750,6 +770,37 @@ ensure_enterprise_subscription <- function(login_id) {
   })
 }
 
+ensure_free_subscription <- function(login_id) {
+  tryCatch({
+    
+    free_id <- dbGetQuery(pool,
+                          "SELECT subscription_level_id FROM dim_subscription
+       WHERE subscription_name = 'Free' LIMIT 1")$subscription_level_id[1]
+    
+    # Only insert if no active subscription exists at all
+    existing <- dbGetQuery(pool,
+                           "SELECT COUNT(*) as cnt FROM fact_user_sub_level
+       WHERE login_id = $1
+         AND date_valid_from <= CURRENT_DATE
+         AND date_valid_to >= CURRENT_DATE",
+                           params = list(login_id))$cnt
+    
+    if (existing == 0) {
+      dbExecute(pool,
+                "INSERT INTO fact_user_sub_level
+           (login_id, subscription_level_id, date_valid_from, date_valid_to)
+         VALUES ($1, $2, CURRENT_DATE, '2099-12-31')
+         ON CONFLICT DO NOTHING",
+                params = list(login_id, free_id))
+    }
+    
+    return(invisible(TRUE))
+    
+  }, error = function(e) {
+    warning(paste("ensure_free_subscription failed:", e$message))
+    return(invisible(FALSE))
+  })
+}
 
 estimate_setup_time <- function(n_competitors, n_prompts, n_personas) {
   
@@ -1055,7 +1106,7 @@ estimate_rescore_time <- function(login_id) {
 }
 
 #' Update brand reach for all of a user's brands
-update_user_brand_reach <- function(login_id, brand_reach, 
+update_user_brand_reach <- function(login_id, brand_reach,
                                     reach_country  = NULL,
                                     reach_region   = NULL,
                                     reach_postcode = NULL) {
@@ -1066,16 +1117,7 @@ update_user_brand_reach <- function(login_id, brand_reach,
     if (!is.null(reach_region)   && !nzchar(reach_region))   reach_region   <- NULL
     if (!is.null(reach_postcode) && !nzchar(reach_postcode)) reach_postcode <- NULL
     
-    # Update fact_user_brands_tracked for all active brands
-    dbExecute(pool, "
-      UPDATE fact_user_brands_tracked
-      SET brand_reach = $1
-      WHERE login_id = $2
-        AND date_valid_from <= CURRENT_DATE
-        AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
-              params = list(brand_reach, login_id))
-    
-    # Update dim_brand for all brands this user tracks
+    # Get all brand IDs this user tracks
     brand_ids <- dbGetQuery(pool, "
       SELECT DISTINCT brand_id
       FROM fact_user_brands_tracked
@@ -1084,23 +1126,28 @@ update_user_brand_reach <- function(login_id, brand_reach,
         AND (date_valid_to IS NULL OR date_valid_to >= CURRENT_DATE)",
                             params = list(login_id))$brand_id
     
-    if (length(brand_ids) > 0) {
-      placeholders <- paste0("$", seq_along(brand_ids) + 4, collapse = ", ")
-      dbExecute(pool,
-                sprintf("UPDATE dim_brand 
-                 SET brand_reach    = $1,
-                     reach_country  = $2,
-                     reach_region   = $3,
-                     reach_postcode = $4
-                 WHERE brand_id IN (%s)", placeholders),
-                params = as.list(c(
-                  brand_reach,
-                  reach_country  %||% NA,
-                  reach_region   %||% NA,
-                  reach_postcode %||% NA,
-                  brand_ids
-                )))
+    if (length(brand_ids) == 0) {
+      return(list(success = TRUE, brand_ids = c()))
     }
+    
+    # Update dim_brand for all brands this user tracks
+    # (reach lives on dim_brand, not fact_user_brands_tracked)
+    placeholders <- paste0("$", seq_along(brand_ids) + 4, collapse = ", ")
+    dbExecute(pool,
+              sprintf("
+        UPDATE dim_brand
+        SET brand_reach    = $1,
+            reach_country  = $2,
+            reach_region   = $3,
+            reach_postcode = $4
+        WHERE brand_id IN (%s)", placeholders),
+              params = as.list(c(
+                brand_reach,
+                reach_country  %||% NA,
+                reach_region   %||% NA,
+                reach_postcode %||% NA,
+                brand_ids
+              )))
     
     return(list(success = TRUE, brand_ids = brand_ids))
     
@@ -1152,9 +1199,10 @@ format_reach_display <- function(brand_reach, reach_country = NULL,
 generate_api_key <- function(login_id, key_name = "Default") {
   
   # Check enterprise subscription
-  sub <- get_user_subscription(login_id)
-  if (sub$subscription_name != "Enterprise") {
-    return(list(success = FALSE, message = "API access is an Enterprise feature."))
+  # API access available on Pro and Enterprise
+  if (!sub$subscription_name %in% c("Pro", "Enterprise")) {
+    return(list(success = FALSE,
+                message = "API access requires a Pro or Enterprise plan."))
   }
   
   # Limit to 5 active keys per user
@@ -1240,3 +1288,307 @@ validate_api_key <- function(api_key, con) {
   return(result)
 }
 
+is_demo_session <- function(rv) {
+  isTRUE(rv$is_demo)
+}
+
+# ============================================
+# Password reset helpers
+# ============================================
+
+#' Validate password strength
+#' Returns NULL if ok, or an error message string
+validate_password_strength <- function(password) {
+  if (nchar(password) < 8) {
+    return("Password must be at least 8 characters.")
+  }
+  if (!grepl("[A-Z]", password)) {
+    return("Password must contain at least one capital letter.")
+  }
+  if (!grepl("[0-9]", password)) {
+    return("Password must contain at least one number.")
+  }
+  if (!grepl("[^A-Za-z0-9]", password)) {
+    return("Password must contain at least one special character (e.g. !@#$).")
+  }
+  return(NULL)
+}
+
+#' Generate a password reset token and store it
+generate_reset_token <- function(email) {
+  
+  user <- dbGetQuery(pool,
+                     "SELECT login_id FROM dim_user WHERE email = $1",
+                     params = list(tolower(trimws(email))))
+  
+  # Email not found — return structured response not NULL
+  if (nrow(user) == 0) {
+    return(list(success = FALSE, token = NULL))
+  }
+  
+  login_id <- user$login_id[1]
+  token    <- paste0(sample(c(letters, LETTERS, 0:9), 48, replace = TRUE),
+                     collapse = "")
+  expires  <- Sys.time() + 3600
+  
+  # Delete any existing tokens for this user
+  dbExecute(pool,
+            "DELETE FROM dim_password_reset_tokens WHERE login_id = $1",
+            params = list(login_id))
+  
+  dbExecute(pool,
+            "INSERT INTO dim_password_reset_tokens
+       (login_id, token, expires_at, used)
+     VALUES ($1, $2, $3, FALSE)",
+            params = list(login_id, token, expires))
+  
+  return(list(success = TRUE, token = token, login_id = login_id))
+}
+
+#' Validate a reset token
+validate_reset_token <- function(token) {
+  result <- dbGetQuery(pool, "
+    SELECT t.token_id, t.login_id, u.email
+    FROM dim_password_reset_tokens t
+    JOIN dim_user u ON u.login_id = t.login_id
+    WHERE t.token = $1
+      AND t.used = FALSE
+      AND t.expires_at > NOW()",
+                       params = list(token))
+  
+  if (nrow(result) == 0) return(NULL)
+  result
+}
+
+#' Apply a password reset
+apply_password_reset <- function(token, new_password) {
+  
+  token_row <- validate_reset_token(token)
+  if (is.null(token_row)) {
+    return(list(success = FALSE,
+                message = "Reset link is invalid or has expired."))
+  }
+  
+  # Update password
+  dbExecute(pool, "
+    UPDATE dim_user SET password_hash = $1 WHERE login_id = $2",
+            params = list(hash_password(new_password), token_row$login_id[1]))
+  
+  # Mark token used
+  dbExecute(pool, "
+    UPDATE dim_password_reset_tokens SET used = TRUE
+    WHERE token_id = $1",
+            params = list(token_row$token_id[1]))
+  
+  return(list(success = TRUE, email = token_row$email[1]))
+}
+
+#' Send password reset email
+#' Uses basic SMTP — configure env vars for your email provider
+send_reset_email <- function(to_email, reset_token, app_url) {
+  
+  reset_url <- paste0(app_url, "?reset_token=", reset_token)
+  
+  subject <- "Reset your AiRR password"
+  
+  body <- paste0(
+    "Hi,\n\n",
+    "You requested a password reset for your AiRR account.\n\n",
+    "Click the link below to reset your password. ",
+    "This link expires in 1 hour.\n\n",
+    reset_url, "\n\n",
+    "If you didn't request this, you can safely ignore this email.\n\n",
+    "The AiRR Team\n",
+    "airrscore.com"
+  )
+  
+  tryCatch({
+    
+    smtp_server   <- Sys.getenv("SMTP_HOST")
+    smtp_port     <- as.integer(Sys.getenv("SMTP_PORT") %||% "587")
+    smtp_user     <- Sys.getenv("SMTP_USER")
+    smtp_password <- Sys.getenv("SMTP_PASSWORD")
+    from_email    <- Sys.getenv("SMTP_FROM") %||% "noreply@airrscore.com"
+    
+    if (!nzchar(smtp_server)) {
+      message("SMTP not configured — reset URL: ", reset_url)
+      return(list(success = TRUE, url = reset_url))
+    }
+    
+    # Use curl to send via SMTP
+    system2(
+      "curl",
+      args = c(
+        "--ssl-reqd",
+        paste0("--url 'smtps://", smtp_server, ":", smtp_port, "'"),
+        paste0("--user '", smtp_user, ":", smtp_password, "'"),
+        paste0("--mail-from '", from_email, "'"),
+        paste0("--mail-rcpt '", to_email, "'"),
+        "--upload-file -"
+      ),
+      input = c(
+        paste0("From: AiRR Password Reset <", smtp_user, ">"),
+        paste0("To: ", to_email),
+        paste0("Subject: ", subject),
+        "",
+        body
+      ),
+      stdout = TRUE,
+      stderr = TRUE
+    )
+    
+    return(list(success = TRUE, url = reset_url))
+    
+  }, error = function(e) {
+    message("Email send failed: ", e$message)
+    message("Reset URL: ", reset_url)
+    return(list(success = TRUE, url = reset_url))  # still succeed
+  })
+}
+
+#' Reset a demo onboarding account back to vanilla state
+#' Removes all brands, competitors, prompts, personas and marks
+#' onboarding as incomplete so they go through setup again next login
+reset_onboarding_account <- function(login_id) {
+  tryCatch({
+    
+    message(sprintf("=== Resetting onboarding account: login_id %d ===", login_id))
+    
+    # 1. Hard-delete score history first (before removing brand tracking rows
+    #    so the USING join in query_history still works)
+    dbExecute(pool, "
+      DELETE FROM fact_airr_history
+      WHERE login_id = $1",
+              params = list(login_id))
+    
+    dbExecute(pool, "
+      DELETE FROM fact_presence_history
+      WHERE login_id = $1",
+              params = list(login_id))
+    
+    dbExecute(pool, "
+      DELETE FROM fact_perception_history
+      WHERE login_id = $1",
+              params = list(login_id))
+    
+    dbExecute(pool, "
+      DELETE FROM fact_prestige_history
+      WHERE login_id = $1",
+              params = list(login_id))
+    
+    dbExecute(pool, "
+      DELETE FROM fact_persistence_history
+      WHERE login_id = $1",
+              params = list(login_id))
+    
+    # Query history — join to brands tracked to find this user's records
+    dbExecute(pool, "
+      DELETE FROM fact_query_history
+      WHERE brand_id IN (
+        SELECT brand_id FROM fact_user_brands_tracked
+        WHERE login_id = $1
+      )",
+              params = list(login_id))
+    
+    message("  ✓ Score history cleared")
+    
+    # 2. Hard-delete brand tracking
+    dbExecute(pool, "
+      DELETE FROM fact_user_brands_tracked
+      WHERE login_id = $1",
+              params = list(login_id))
+    message("  ✓ Brands cleared")
+    
+    # 3. Hard-delete prompt tracking
+    dbExecute(pool, "
+      DELETE FROM fact_user_queries_tracked
+      WHERE login_id = $1",
+              params = list(login_id))
+    message("  ✓ Prompts cleared")
+    
+    # 4. Hard-delete personas
+    dbExecute(pool, "
+      DELETE FROM fact_user_profiles_tracked
+      WHERE login_id = $1",
+              params = list(login_id))
+    message("  ✓ Personas cleared")
+    
+    # 5. Delete pending job queue entries
+    dbExecute(pool, "
+      DELETE FROM dim_job_queue
+      WHERE login_id = $1
+        AND status = 'pending'",
+              params = list(login_id))
+    message("  ✓ Pending jobs cleared")
+    
+    # 6. Mark onboarding as incomplete
+    dbExecute(pool, "
+      UPDATE dim_user
+      SET onboarding_complete = FALSE
+      WHERE login_id = $1",
+              params = list(login_id))
+    message("  ✓ Onboarding reset")
+    
+    message("=== Onboarding account reset complete ===")
+    return(invisible(TRUE))
+    
+  }, error = function(e) {
+    message(sprintf("✗ Reset failed for login_id %d: %s", login_id, e$message))
+    return(invisible(FALSE))
+  })
+}
+
+#' Get all aliases for a brand (returns character vector including brand name)
+get_brand_search_names <- function(brand_id, brand_name, con = pool) {
+  aliases <- tryCatch(
+    dbGetQuery(con, "
+      SELECT alias_name FROM dim_brand_aliases
+      WHERE brand_id = $1
+      ORDER BY alias_id",
+               params = list(brand_id))$alias_name,
+    error = function(e) character(0)
+  )
+  # Always include the main brand name first
+  unique(c(brand_name, aliases))
+}
+
+#' Add an alias for a brand
+add_brand_alias <- function(brand_id, alias_name) {
+  tryCatch({
+    dbExecute(pool, "
+      INSERT INTO dim_brand_aliases (brand_id, alias_name)
+      VALUES ($1, $2)
+      ON CONFLICT (brand_id, alias_name) DO NOTHING",
+              params = list(brand_id, trimws(alias_name)))
+    return(TRUE)
+  }, error = function(e) {
+    warning("Error adding alias: ", e$message)
+    return(FALSE)
+  })
+}
+
+#' Remove an alias
+remove_brand_alias <- function(alias_id) {
+  tryCatch({
+    dbExecute(pool,
+              "DELETE FROM dim_brand_aliases WHERE alias_id = $1",
+              params = list(alias_id))
+    return(TRUE)
+  }, error = function(e) {
+    warning("Error removing alias: ", e$message)
+    return(FALSE)
+  })
+}
+
+#' Get aliases for a brand with IDs (for UI display)
+get_brand_aliases <- function(brand_id) {
+  tryCatch(
+    dbGetQuery(pool, "
+      SELECT alias_id, alias_name, date_added
+      FROM dim_brand_aliases
+      WHERE brand_id = $1
+      ORDER BY alias_id",
+               params = list(brand_id)),
+    error = function(e) data.frame()
+  )
+}

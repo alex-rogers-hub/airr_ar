@@ -2784,4 +2784,700 @@ brands_for_query <- dbGetQuery(pool, "
 
 
 
-airr_UxbinoA8ZHNjjCk2B5QwB8v9RRniAcPM02FC5tRanbZmvYar
+
+
+
+
+library(httr2)
+library(jsonlite)
+
+api_key    <- "airr_UxbinoA8ZHNjjCk2B5QwB8v9RRniAcPM02FC5tRanbZmvYar"
+base_url   <- "https://airr.airrscore.com/api"
+
+
+# ── Brand scores ──────────────────────────────────────────────────────────
+
+brand_resp <- request(paste0(base_url, "/v1/brand-scores")) |>
+  req_headers("X-API-Key" = api_key) |>
+  req_url_query(
+    from = "2024-01-01",
+    to   = Sys.Date()
+  ) |>
+  req_perform()
+
+brand_data <- resp_body_json(brand_resp, simplifyVector = TRUE)
+
+# Overall scores as a data frame
+brand_overall <- as.data.frame(brand_data$overall_scores)
+
+# Persona splits as a data frame
+brand_personas <- as.data.frame(brand_data$persona_scores)
+
+print(head(brand_overall))
+print(head(brand_personas))
+
+
+resp <- request("http://54.162.252.165:8765/v1/brand-scores") |>
+  req_headers("X-API-Key" = api_key) |>
+  req_url_query(
+    from = as.character(Sys.Date() - 30),
+    to   = as.character(Sys.Date())
+  ) |>
+  req_perform()
+
+cat("Status:", resp_status(resp), "\n")
+data <- resp_body_json(resp, simplifyVector = TRUE)
+cat("Overall score rows:", nrow(as.data.frame(data$overall_scores)), "\n")
+cat("Persona score rows:", nrow(as.data.frame(data$persona_scores)), "\n")
+print(head(as.data.frame(data$overall_scores)))
+
+
+
+resp2 <- request("http://airr.airrscore.com/api/v1/brand-scores") |>
+  req_headers("X-API-Key" = api_key) |>
+  req_url_query(
+    from = as.character(Sys.Date() - 30),
+    to   = as.character(Sys.Date())
+  ) |>
+  req_perform()
+
+cat("Status:", resp_status(resp2), "\n")
+
+
+
+resp_direct <- request("http://3.65.100.153/api/v1/brand-scores") |>
+  req_headers("X-API-Key" = api_key) |>
+  req_url_query(
+    from = as.character(Sys.Date() - 30),
+    to   = as.character(Sys.Date())
+  ) |>
+  req_perform()
+
+cat("Status:", resp_status(resp_direct), "\n")
+
+
+resp <- request("http://api.airrscore.com/api/v1/brand-scores") |>
+  req_headers("X-API-Key" = api_key) |>
+  req_url_query(from = as.character(Sys.Date() - 30),
+                to   = as.character(Sys.Date())) |>
+  req_perform()
+
+cat("Status:", resp_status(resp), "\n")
+
+
+brands_for_query <- dbGetQuery(pool,"SELECT 
+dq.query_string,
+MAX(fqh.date) as last_scored,
+COUNT(*) as total_records
+FROM fact_query_history fqh
+JOIN dim_query dq ON dq.query_id = fqh.query_id
+GROUP BY dq.query_string
+ORDER BY last_scored DESC;")
+
+
+result <- dbGetQuery(pool, "
+    SELECT 
+      job_type,
+      status,
+      date_trunc('day', created_at) as day,
+      COUNT(*) as cnt
+    FROM dim_job_queue
+    WHERE created_at >= NOW() - INTERVAL '7 days'
+    GROUP BY job_type, status, date_trunc('day', created_at)
+    ORDER BY day DESC, job_type
+  ")
+  
+  print(result)
+  
+
+  prompt_dates <- dbGetQuery(pool, "
+  SELECT 
+    dq.query_string,
+    MAX(fqh.date) as last_scored,
+    COUNT(*) as total_records
+  FROM fact_query_history fqh
+  JOIN dim_query dq ON dq.query_id = fqh.query_id
+  GROUP BY dq.query_string
+  ORDER BY last_scored DESC
+")
+  print(prompt_dates)
+  
+  recent_prompt_scores <- dbGetQuery(pool, "
+  SELECT 
+    dq.query_string,
+    fqh.brand_id,
+    b.brand_name,
+    fqh.date,
+    fqh.airr_score,
+    fqh.presence_score,
+    fqh.perception_score,
+    fqh.prestige_score,
+    fqh.persistence_score
+  FROM fact_query_history fqh
+  JOIN dim_query dq ON dq.query_id = fqh.query_id
+  JOIN dim_brand b ON b.brand_id = fqh.brand_id
+  WHERE fqh.date >= CURRENT_DATE - INTERVAL '3 days'
+  ORDER BY fqh.date DESC, dq.query_string, b.brand_name
+")
+  
+  
+  nike_api <- "airr_rSunRiUxbinoA8ZHNjjCk2B5QwB8v9RRniAcPM02FC5tRanb"
+  
+  
+  resp <- request("http://api.airrscore.com/api/v1/brand-scores") |>
+    req_headers("X-API-Key" = nike_api) |>
+    req_url_query(from = as.character(Sys.Date() - 30),
+                  to   = as.character(Sys.Date())) |>
+    req_perform()
+  
+  cat("Status:", resp_status(resp), "\n")
+  data <- resp_body_json(resp, simplifyVector = TRUE)
+  cat("Overall score rows:", nrow(as.data.frame(data$overall_scores)), "\n")
+  cat("Persona score rows:", nrow(as.data.frame(data$persona_scores)), "\n")
+  print(head(as.data.frame(data$overall_scores)))
+  
+  
+  no <- as.data.frame(data$overall_scores)
+  np <- as.data.frame(data$persona_scores)
+  
+  
+  
+  
+  
+  
+  
+  library(httr2)
+  
+  api_key  <- "YOUR_API_KEY"
+  base_url <- "http://api.airrscore.com/api"
+  
+  # Brand scores
+  resp <- request(paste0(base_url, "/v1/brand-scores")) |>
+    req_headers("X-API-Key" = nike_api) |>
+    req_url_query(from = "2024-01-01", to = Sys.Date()) |>
+    req_perform()
+  
+  data          <- resp_body_json(resp, simplifyVector = TRUE)
+  brand_scores  <- as.data.frame(data$overall_scores)
+  persona_scores <- as.data.frame(data$persona_scores)
+  
+  # Prompt scores
+  resp2 <- request(paste0(base_url, "/v1/prompt-scores")) |>
+    req_headers("X-API-Key" = nike_api) |>
+    req_url_query(from = "2024-01-01", to = Sys.Date()) |>
+    req_perform()
+  
+  prompt_scores <- as.data.frame(
+    resp_body_json(resp2, simplifyVector = TRUE)$overall_scores
+  )
+  
+  # Filter to one brand
+  resp3 <- request(paste0(base_url, "/v1/brand-scores")) |>
+    req_headers("X-API-Key" = api_key) |>
+    req_url_query(from = "2024-01-01",
+                  to    = Sys.Date(),
+                  brand = "Your Brand Name") |>
+    req_perform()
+  
+  filtered <- as.data.frame(
+    resp_body_json(resp3, simplifyVector = TRUE)$overall_scores
+  )
+
+  
+  
+  test_history <- data.frame(
+    date          = seq.Date(Sys.Date() - 15, Sys.Date(), by = "day"),
+    overall_score = c(0, 0, 0, 0, 0, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100)
+  )
+  
+  result <- calculate_persistence_score("test", test_history)
+  cat("Persistence score:", result$score, "\n")
+  cat("CV:", result$coefficient_of_variation, "\n")
+  
+  
+  
+  
+  
+  
+  
+  # Guidance notice
+  div(
+    style = "background: rgba(102,126,234,0.06);
+                 border: 1px solid rgba(102,126,234,0.2);
+                 border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;",
+    div(
+      style = "display: flex; align-items: flex-start; gap: 10px;",
+      icon("bullseye",
+           style = "color: #667eea; font-size: 15px;
+                        flex-shrink: 0; margin-top: 2px;"),
+      div(
+        div(
+          style = "font-weight: 600; font-size: 13px; color: #2d3748;
+                       margin-bottom: 6px;",
+          "Be as specific as possible"
+        ),
+        p(
+          style = "font-size: 12px; color: #718096; margin: 0 0 8px;
+                       line-height: 1.5;",
+          "A reach that's too wide means your brand gets compared against ",
+          "every competitor globally — making it harder to rank well and ",
+          "producing less meaningful scores."
+        ),
+        div(
+          style = "display: flex; flex-direction: column; gap: 5px;",
+          lapply(list(
+            list(
+              icon_name = "globe",
+              col       = "#E74C3C",
+              label     = "Global",
+              bad       = TRUE,
+              desc      = "Only use this if you genuinely compete worldwide"
+            ),
+            list(
+              icon_name = "flag",
+              col       = "#F39C12",
+              label     = "National",
+              bad       = FALSE,
+              desc      = "Good if you operate across one country"
+            ),
+            list(
+              icon_name = "map-marker-alt",
+              col       = "#27AE60",
+              label     = "Regional",
+              bad       = FALSE,
+              desc      = "Best for city or region-level brands"
+            ),
+            list(
+              icon_name = "location-crosshairs",
+              col       = "#27AE60",
+              label     = "Near Me",
+              bad       = FALSE,
+              desc      = "Best for local businesses with a single location"
+            )
+          ), function(opt) {
+            div(
+              style = "display: flex; align-items: center; gap: 8px;
+                           font-size: 12px;",
+              icon(opt$icon_name,
+                   style = paste0("color: ", opt$col, 
+                                  "; font-size: 11px; flex-shrink: 0;",
+                                  " width: 14px; text-align: center;")),
+              tags$span(
+                style = paste0("font-weight: 600; color: ", opt$col,
+                               "; flex: 0 0 70px;"),
+                opt$label
+              ),
+              tags$span(
+                style = "color: #718096;",
+                opt$desc
+              ),
+              if (opt$bad) {
+                tags$span(
+                  style = "margin-left: auto; font-size: 10px; font-weight: 600;
+                               background: rgba(231,76,60,0.1); color: #E74C3C;
+                               padding: 1px 7px; border-radius: 8px; flex-shrink: 0;",
+                  "avoid unless global"
+                )
+              }
+            )
+          })
+        )
+      )
+    )
+  )
+  
+  
+  
+  
+  
+  
+  # Run anytime to see current state
+  dbGetQuery(pool, "
+  SELECT 
+    up.email,
+    up.access_level,
+    up.amount,
+    up.purchase_date,
+    up.is_active,
+    u.login_id,
+    u.onboarding_complete,
+    ds.subscription_name as current_sub
+  FROM user_purchases up
+  LEFT JOIN dim_user u ON u.email = up.email
+  LEFT JOIN fact_user_sub_level fus 
+    ON fus.login_id = u.login_id
+    AND fus.date_valid_from <= CURRENT_DATE
+    AND fus.date_valid_to >= CURRENT_DATE
+  LEFT JOIN dim_subscription ds
+    ON ds.subscription_level_id = fus.subscription_level_id
+  ORDER BY up.purchase_date DESC
+")
+  
+  
+  
+  
+  dbGetQuery(pool, "
+  SELECT * FROM user_purchases 
+  ORDER BY purchase_date DESC 
+  LIMIT 5
+")
+  
+  
+  
+  dbGetQuery(pool, "
+  SELECT 
+    u.email,
+    ds.subscription_name,
+    fus.date_valid_from,
+    fus.date_valid_to
+  FROM dim_user u
+  JOIN fact_user_sub_level fus 
+    ON fus.login_id = u.login_id
+    AND fus.date_valid_to >= CURRENT_DATE
+  JOIN dim_subscription ds 
+    ON ds.subscription_level_id = fus.subscription_level_id
+  ORDER BY fus.date_valid_from DESC
+  LIMIT 5
+")
+  
+  
+  
+  
+  
+  # Add Starter tier and update existing ones to match your new limits
+  dbExecute(pool, "
+  INSERT INTO dim_subscription 
+    (subscription_level_id, subscription_name, 
+     num_prompts_included, num_competitors_included)
+  VALUES (2, 'Starter', 1, 5)
+  ON CONFLICT (subscription_level_id) DO UPDATE SET
+    subscription_name        = EXCLUDED.subscription_name,
+    num_prompts_included     = EXCLUDED.num_prompts_included,
+    num_competitors_included = EXCLUDED.num_competitors_included
+")
+  
+  dbExecute(pool, "
+  UPDATE dim_subscription SET
+    subscription_name        = 'Pro',
+    num_prompts_included     = 10,
+    num_competitors_included = 10
+  WHERE subscription_level_id = 3
+")
+  
+  dbExecute(pool, "
+  UPDATE dim_subscription SET
+    subscription_name        = 'Enterprise',
+    num_prompts_included     = 10,
+    num_competitors_included = 10
+  WHERE subscription_level_id = 4
+")
+
+# Add personas column if not already there
+dbExecute(pool, "
+  ALTER TABLE dim_subscription 
+  ADD COLUMN IF NOT EXISTS num_personas_included INTEGER DEFAULT 0
+  ")
+
+dbExecute(pool, "
+  UPDATE dim_subscription SET num_personas_included = 0 
+  WHERE subscription_level_id = 1
+  ")
+dbExecute(pool, "
+  UPDATE dim_subscription SET num_personas_included = 1 
+  WHERE subscription_level_id = 2
+  ")
+dbExecute(pool, "
+  UPDATE dim_subscription SET num_personas_included = 3 
+  WHERE subscription_level_id = 3
+  ")
+dbExecute(pool, "
+  UPDATE dim_subscription SET num_personas_included = 3 
+  WHERE subscription_level_id = 4
+  ")
+
+# Confirm
+dbGetQuery(pool, "SELECT * FROM dim_subscription ORDER BY subscription_level_id")
+  
+  
+dbExecute(pool, "
+  ALTER TABLE dim_subscription
+  ADD COLUMN IF NOT EXISTS monthly_price_usd   NUMERIC,
+  ADD COLUMN IF NOT EXISTS annual_price_usd    NUMERIC,
+  ADD COLUMN IF NOT EXISTS stripe_monthly_link TEXT,
+  ADD COLUMN IF NOT EXISTS stripe_annual_link  TEXT
+")
+
+# Free
+dbExecute(pool, "
+  UPDATE dim_subscription SET
+    monthly_price_usd   = 0,
+    annual_price_usd    = 0
+  WHERE subscription_level_id = 1
+")
+
+# Starter
+dbExecute(pool, "
+  UPDATE dim_subscription SET
+    monthly_price_usd   = 129,
+    annual_price_usd    = 99,
+    stripe_monthly_link = 'https://buy.stripe.com/dRmeVfep5cSv0zq9Q9gEg04',
+    stripe_annual_link  = 'https://buy.stripe.com/00wbJ36WD2dRci86DXgEg03'
+  WHERE subscription_level_id = 2
+")
+
+# Pro
+dbExecute(pool, "
+  UPDATE dim_subscription SET
+    monthly_price_usd   = 449,
+    annual_price_usd    = 349,
+    stripe_monthly_link = 'https://buy.stripe.com/5kQ3cx3Kr8Cfci85zTgEg01',
+    stripe_annual_link  = 'https://buy.stripe.com/28E9AV6WD8Cfaa01jDgEg00'
+  WHERE subscription_level_id = 3
+")
+
+# Enterprise
+dbExecute(pool, "
+  UPDATE dim_subscription SET
+    monthly_price_usd   = NULL,
+    annual_price_usd    = NULL,
+    stripe_monthly_link = 'https://airrscore.com/pricing',
+    stripe_annual_link  = 'https://airrscore.com/pricing'
+  WHERE subscription_level_id = 4
+")
+  
+  
+  
+
+
+
+
+# Get Pro subscription level ID
+pro_id <- dbGetQuery(pool, "
+  SELECT subscription_level_id FROM dim_subscription
+  WHERE subscription_name = 'Pro' LIMIT 1
+")$subscription_level_id[1]
+
+cat("Pro subscription_level_id:", pro_id, "\n")
+
+# Login IDs to restore
+login_ids <- c(45,46,51,52,53,54,58)
+
+
+for (lid in login_ids) {
+  dbExecute(pool, "
+    INSERT INTO fact_user_sub_level
+      (login_id, subscription_level_id, date_valid_from, date_valid_to)
+    VALUES ($1, $2, CURRENT_DATE, '2099-12-31')
+    ON CONFLICT DO NOTHING",
+            params = list(lid, pro_id))
+  cat("✓ login_id", lid, "→ Pro\n")
+}
+
+# Verify
+result <- dbGetQuery(pool, "
+  SELECT 
+    u.login_id,
+    u.email,
+    ds.subscription_name,
+    fus.date_valid_from,
+    fus.date_valid_to
+  FROM fact_user_sub_level fus
+  JOIN dim_user u ON u.login_id = fus.login_id
+  JOIN dim_subscription ds ON ds.subscription_level_id = fus.subscription_level_id
+  WHERE fus.login_id = ANY($1)
+    AND fus.date_valid_to >= CURRENT_DATE
+  ORDER BY u.login_id",
+                     params = list(login_ids))
+
+print(result)
+cat("\nTotal restored:", nrow(result), "of", length(login_ids), "\n")
+
+dbExecute(pool, "
+  ALTER TABLE fact_user_sub_level
+  ADD COLUMN IF NOT EXISTS extra_personas_added INTEGER DEFAULT 0
+")
+
+
+dbGetQuery(pool, "SELECT * FROM dim_subscription ORDER BY subscription_level_id")
+
+dbExecute(pool, "
+  UPDATE dim_subscription 
+  SET subscription_name        = 'Free',
+      num_prompts_included     = 0,
+      num_competitors_included = 0,
+      num_personas_included    = 0,
+      monthly_price_usd        = 0,
+      annual_price_usd         = 0,
+      stripe_monthly_link      = NULL,
+      stripe_annual_link       = NULL
+  WHERE subscription_level_id = 1
+")
+
+dbGetQuery(pool, "
+  SELECT * FROM user_purchases 
+  ORDER BY purchase_date DESC 
+  LIMIT 5
+")
+
+
+dbGetQuery(pool, "
+  SELECT 
+    u.login_id,
+    u.email,
+    u.onboarding_complete,
+    ds.subscription_name,
+    fus.date_valid_from,
+    fus.date_valid_to
+  FROM dim_user u
+  LEFT JOIN fact_user_sub_level fus 
+    ON fus.login_id = u.login_id
+    AND fus.date_valid_to >= CURRENT_DATE
+  LEFT JOIN dim_subscription ds 
+    ON ds.subscription_level_id = fus.subscription_level_id
+  WHERE u.email = 'steve@syfter.com'
+")
+
+# Find the purchase that came in with the wrong email
+dbGetQuery(pool, "
+  SELECT * FROM user_purchases ORDER BY purchase_date DESC LIMIT 5
+")
+
+# Find their actual login_id by the email they registered with
+user <- dbGetQuery(pool, "
+  SELECT login_id, email FROM dim_user 
+  WHERE email = 'sperlman1@gmail.com'
+")
+
+login_id <- user$login_id[1]
+
+# Set their subscription correctly
+sub_level_id <- dbGetQuery(pool, "
+  SELECT subscription_level_id FROM dim_subscription
+  WHERE subscription_name = 'Starter'  -- or Pro
+  LIMIT 1
+")$subscription_level_id[1]
+
+dbExecute(pool, "
+  UPDATE fact_user_sub_level
+  SET date_valid_to = CURRENT_DATE - 1
+  WHERE login_id = $1 AND date_valid_to >= CURRENT_DATE",
+          params = list(login_id))
+
+dbExecute(pool, "
+  INSERT INTO fact_user_sub_level
+    (login_id, subscription_level_id, date_valid_from, date_valid_to)
+  VALUES ($1, $2, CURRENT_DATE, '2099-12-31')",
+          params = list(login_id, sub_level_id))
+
+cat("Done — login_id", login_id, "now has", 
+    dbGetQuery(pool, "SELECT subscription_name FROM dim_subscription 
+               WHERE subscription_level_id = $1",
+               params = list(sub_level_id))$subscription_name, "\n")
+
+
+
+
+
+dbExecute(pool, "
+  ALTER TABLE dim_user 
+  ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT FALSE
+")
+
+# Create a table mapping demo users to the accounts they can view
+dbExecute(pool, "
+  CREATE TABLE IF NOT EXISTS dim_demo_accounts (
+    id           SERIAL PRIMARY KEY,
+    demo_login_id   INTEGER NOT NULL REFERENCES dim_user(login_id),
+    target_login_id INTEGER NOT NULL REFERENCES dim_user(login_id),
+    display_order   INTEGER DEFAULT 0,
+    UNIQUE (demo_login_id, target_login_id)
+  )
+")
+
+demo_login_id <- dbGetQuery(pool, "
+  INSERT INTO dim_user (date_added, email, password_hash, 
+                        onboarding_complete, is_demo)
+  VALUES (CURRENT_DATE, 'demo@airrscore.com', $1, TRUE, TRUE)
+  ON CONFLICT (email) DO UPDATE SET is_demo = TRUE
+  RETURNING login_id",
+                            params = list(digest::digest("Demo1234!", algo = "sha256")))$login_id
+
+cat("Demo login_id:", demo_login_id, "\n")
+
+# Give demo user Enterprise subscription so they see everything
+ent_id <- dbGetQuery(pool, "
+  SELECT subscription_level_id FROM dim_subscription
+  WHERE subscription_name = 'Enterprise' LIMIT 1
+")$subscription_level_id[1]
+
+dbExecute(pool, "
+  INSERT INTO fact_user_sub_level
+    (login_id, subscription_level_id, date_valid_from, date_valid_to)
+  VALUES ($1, $2, CURRENT_DATE, '2099-12-31')
+  ON CONFLICT DO NOTHING",
+          params = list(demo_login_id, ent_id))
+
+
+# Link demo user to the accounts they should be able to view
+# Replace these login_ids with real ones that have good data
+demo_targets <- c(3, 37, 58)  # accounts with good scores to show off
+
+
+for (i in seq_along(demo_targets)) {
+  dbExecute(pool, "
+    INSERT INTO dim_demo_accounts 
+      (demo_login_id, target_login_id, display_order)
+    VALUES ($1, $2, $3)
+    ON CONFLICT DO NOTHING",
+            params = list(demo_login_id, demo_targets[i], i))
+}
+
+
+
+dbExecute(pool, "
+  CREATE TABLE IF NOT EXISTS dim_password_reset_tokens (
+    token_id     SERIAL PRIMARY KEY,
+    login_id     INTEGER NOT NULL REFERENCES dim_user(login_id),
+    token        VARCHAR(64) NOT NULL UNIQUE,
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+    expires_at   TIMESTAMP NOT NULL,
+    used         BOOLEAN NOT NULL DEFAULT FALSE
+  )
+")
+
+dbExecute(pool, "
+  CREATE INDEX IF NOT EXISTS idx_reset_tokens_token 
+  ON dim_password_reset_tokens(token)
+")
+
+# Quick test
+send_reset_email(
+  to_email    = "alex@airrscore.com",
+  reset_token = "test123",
+  app_url     = "https://airr.airrscore.com/AiRR"
+)
+
+dbExecute(pool, "
+  DELETE FROM dim_password_reset_tokens 
+  WHERE token = 'lPzfbf20jxfJoYmZwtdTUB7QhIV9MZoZ5Fk9iMlx9Y3XvadZ'
+")
+
+
+
+
+
+dbExecute(pool, "
+  CREATE TABLE IF NOT EXISTS dim_brand_aliases (
+    alias_id    SERIAL PRIMARY KEY,
+    brand_id    INTEGER NOT NULL REFERENCES dim_brand(brand_id),
+    alias_name  TEXT NOT NULL,
+    date_added  DATE NOT NULL DEFAULT CURRENT_DATE,
+    UNIQUE (brand_id, alias_name)
+  )
+")
+
+# Index for fast lookup
+dbExecute(pool, "
+  CREATE INDEX IF NOT EXISTS idx_brand_aliases_brand_id 
+  ON dim_brand_aliases(brand_id)
+")

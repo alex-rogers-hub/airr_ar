@@ -17,33 +17,33 @@ STANDARD_PROFILE_NAMES <- c(
 output$profiles_access_gate <- renderUI({
   req(rv$logged_in)
   
-  sub <- user_subscription()
-  
-  if (sub$subscription_name != "Enterprise") {
-    return(
-      div(
-        style = "text-align: center; padding: 60px 20px;",
-        div(
-          style = "background: white; border-radius: 16px; padding: 50px 40px; 
-                   max-width: 500px; margin: 0 auto;
-                   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-                   border-top: 4px solid #8E44AD;",
-          icon("crown", class = "fa-3x", style = "color: #8E44AD; margin-bottom: 20px;"),
-          h3(style = "font-weight: 700; color: #2d3748; margin-bottom: 10px;",
-             "Enterprise Feature"),
-          p(style = "color: #718096; font-size: 14px; line-height: 1.6; margin-bottom: 24px;",
-            "Customer personas allow you to score your brand and prompts ",
-            "through the eyes of specific customer segments. ",
-            "Upgrade to Enterprise to unlock this feature."),
-          actionButton("upgrade_from_profiles", "View Plans",
-                       icon = icon("arrow-up"),
-                       style = "background: #8E44AD; color: white; border: none; 
-                                border-radius: 8px; padding: 10px 28px; 
-                                font-weight: 600; font-size: 14px;")
-        )
-      )
-    )
-  }
+  # sub <- user_subscription()
+  # 
+  # if (sub$subscription_name != "Enterprise") {
+  #   return(
+  #     div(
+  #       style = "text-align: center; padding: 60px 20px;",
+  #       div(
+  #         style = "background: white; border-radius: 16px; padding: 50px 40px; 
+  #                  max-width: 500px; margin: 0 auto;
+  #                  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  #                  border-top: 4px solid #8E44AD;",
+  #         icon("crown", class = "fa-3x", style = "color: #8E44AD; margin-bottom: 20px;"),
+  #         h3(style = "font-weight: 700; color: #2d3748; margin-bottom: 10px;",
+  #            "Enterprise Feature"),
+  #         p(style = "color: #718096; font-size: 14px; line-height: 1.6; margin-bottom: 24px;",
+  #           "Customer personas allow you to score your brand and prompts ",
+  #           "through the eyes of specific customer segments. ",
+  #           "Upgrade to Enterprise to unlock this feature."),
+  #         actionButton("upgrade_from_profiles", "View Plans",
+  #                      icon = icon("arrow-up"),
+  #                      style = "background: #8E44AD; color: white; border: none; 
+  #                               border-radius: 8px; padding: 10px 28px; 
+  #                               font-weight: 600; font-size: 14px;")
+  #       )
+  #     )
+  #   )
+  # }
   
   profiles_main_ui()
 })
@@ -242,11 +242,17 @@ output$profile_custom_timing_notice <- renderUI({
 # ============================================
 
 output$profile_slot_badge <- renderUI({
+  sub       <- tryCatch(user_subscription(), error = function(e) NULL)
+  max_p     <- if (!is.null(sub)) {
+    (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  } else { 0 }
   used      <- user_profile_count()
-  remaining <- MAX_PROFILES - used
+  remaining <- max_p - used
+  
   if (remaining > 0) {
     tags$span(class = "slot-badge available",
-              paste0(remaining, " slot", ifelse(remaining != 1, "s", ""), " remaining"))
+              paste0(remaining, " slot",
+                     ifelse(remaining != 1, "s", ""), " remaining"))
   } else {
     tags$span(class = "slot-badge full", "No slots remaining")
   }
@@ -347,8 +353,12 @@ observeEvent(input$add_standard_profile_btn, {
     showNotification("Please select a profile to add.", type = "error", duration = 3)
     return()
   }
-  if (user_profile_count() >= MAX_PROFILES) {
-    showNotification("Persona limit reached.", type = "error", duration = 3)
+  sub     <- user_subscription()
+  max_p   <- (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  if (user_profile_count() >= max_p) {
+    showNotification(
+      "You've used all your persona slots. Upgrade to add more.",
+      type = "error", duration = 5)
     return()
   }
   existing <- user_profiles()
@@ -408,8 +418,12 @@ observeEvent(input$add_custom_profile_btn, {
     showNotification("Please enter a profile description.", type = "error", duration = 3)
     return()
   }
-  if (user_profile_count() >= MAX_PROFILES) {
-    showNotification("Profile limit reached.", type = "error", duration = 3)
+  sub     <- user_subscription()
+  max_p   <- (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  if (user_profile_count() >= max_p) {
+    showNotification(
+      "You've used all your persona slots. Upgrade to add more.",
+      type = "error", duration = 5)
     return()
   }
   
@@ -663,30 +677,8 @@ observe({
 output$brand_overview_profiles_section <- renderUI({
   req(rv$logged_in, rv$login_id)
   
-  sub <- user_subscription()
-  
-  if (sub$subscription_name != "Enterprise") {
-    return(
-      div(
-        style = "text-align: center; padding: 30px;",
-        div(
-          style = "background: linear-gradient(135deg, rgba(142,68,173,0.06), 
-                   rgba(142,68,173,0.02)); border: 1px dashed rgba(142,68,173,0.3);
-                   border-radius: 12px; padding: 30px 20px; max-width: 500px; 
-                   margin: 0 auto;",
-          icon("crown", class = "fa-2x", style = "color: #8E44AD; margin-bottom: 12px;"),
-          div(style = "font-size: 15px; font-weight: 600; color: #2d3748; margin-bottom: 6px;",
-              "Customer personas — Enterprise Feature"),
-          div(style = "font-size: 13px; color: #718096; margin-bottom: 16px; line-height: 1.5;",
-              "See how different customer personas perceive your brand vs competitors."),
-          actionButton("upgrade_from_brand_profiles", "View Plans",
-                       icon = icon("arrow-up"),
-                       style = "background: #8E44AD; color: white; border: none;
-                                border-radius: 8px; padding: 8px 20px; font-weight: 600;")
-        )
-      )
-    )
-  }
+  sub   <- user_subscription()
+  max_p <- (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
   
   profiles <- user_profiles()
   
@@ -694,12 +686,27 @@ output$brand_overview_profiles_section <- renderUI({
     return(
       div(
         style = "text-align: center; padding: 30px; color: #a0aec0;",
-        icon("users", class = "fa-2x", style = "margin-bottom: 10px; color: #e2e8f0;"),
+        icon("users", class = "fa-2x",
+             style = "margin-bottom: 10px; color: #e2e8f0;"),
         p("No personas set up yet."),
-        actionButton("manage_profiles_from_brand2", "Add Profiles",
-                     icon = icon("plus"),
-                     style = "background: #8E44AD; color: white; border: none;
-                              border-radius: 8px; padding: 8px 20px; font-weight: 600;")
+        if (max_p > 0) {
+          actionButton("manage_profiles_from_brand2", "Add Personas",
+                       icon = icon("plus"),
+                       style = "background: #8E44AD; color: white; border: none;
+                                border-radius: 8px; padding: 8px 20px;
+                                font-weight: 600;")
+        } else {
+          div(
+            style = "margin-top: 10px;",
+            p(style = "font-size: 13px; color: #718096; margin-bottom: 10px;",
+              "Upgrade your plan to unlock persona scoring."),
+            actionButton("upgrade_btn_from_brand_personas", "View Plans",
+                         icon = icon("arrow-up"),
+                         style = "background: #8E44AD; color: white; border: none;
+                                  border-radius: 8px; padding: 8px 20px;
+                                  font-weight: 600;")
+          )
+        }
       )
     )
   }
@@ -715,17 +722,21 @@ output$brand_overview_profiles_section <- renderUI({
       
       div(
         style = paste0(
-          "flex: 1; min-width: 200px; cursor: pointer; border-radius: 12px; ",
-          "transition: all 0.2s ease; ",
+          "flex: 1; min-width: 200px; cursor: pointer;
+           border-radius: 12px; transition: all 0.2s ease; ",
           if (is_selected) "outline: 3px solid #8E44AD; outline-offset: 2px;" else ""
         ),
         onclick = sprintf(
-          "Shiny.setInputValue('brand_profile_card_click', %d, {priority: 'event'})", pid
-        ),
+          "Shiny.setInputValue('brand_profile_card_click', %d,
+           {priority: 'event'})", pid),
         uiOutput(paste0("brand_overview_profile_card_", pid))
       )
     })
   )
+})
+
+observeEvent(input$upgrade_btn_from_brand_personas, {
+  shinyjs::click("upgrade_btn")
 })
 
 # ============================================
@@ -859,30 +870,8 @@ observe({
 output$prompt_overview_profiles_section <- renderUI({
   req(rv$logged_in, rv$login_id)
   
-  sub <- user_subscription()
-  
-  if (sub$subscription_name != "Enterprise") {
-    return(
-      div(
-        style = "text-align: center; padding: 30px;",
-        div(
-          style = "background: linear-gradient(135deg, rgba(142,68,173,0.06), 
-                   rgba(142,68,173,0.02)); border: 1px dashed rgba(142,68,173,0.3);
-                   border-radius: 12px; padding: 30px 20px; max-width: 500px; 
-                   margin: 0 auto;",
-          icon("crown", class = "fa-2x", style = "color: #8E44AD; margin-bottom: 12px;"),
-          div(style = "font-size: 15px; font-weight: 600; color: #2d3748; margin-bottom: 6px;",
-              "Customer personas — Enterprise Feature"),
-          div(style = "font-size: 13px; color: #718096; margin-bottom: 16px; line-height: 1.5;",
-              "See how different customer segments respond to your tracked prompts."),
-          actionButton("upgrade_from_prompt_profiles", "View Plans",
-                       icon = icon("arrow-up"),
-                       style = "background: #8E44AD; color: white; border: none;
-                                border-radius: 8px; padding: 8px 20px; font-weight: 600;")
-        )
-      )
-    )
-  }
+  sub   <- user_subscription()
+  max_p <- (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
   
   profiles <- user_profiles()
   
@@ -890,12 +879,27 @@ output$prompt_overview_profiles_section <- renderUI({
     return(
       div(
         style = "text-align: center; padding: 30px; color: #a0aec0;",
-        icon("users", class = "fa-2x", style = "margin-bottom: 10px; color: #e2e8f0;"),
+        icon("users", class = "fa-2x",
+             style = "margin-bottom: 10px; color: #e2e8f0;"),
         p("No personas set up yet."),
-        actionButton("manage_profiles_from_prompt2", "Add personas",
-                     icon = icon("plus"),
-                     style = "background: #8E44AD; color: white; border: none;
-                              border-radius: 8px; padding: 8px 20px; font-weight: 600;")
+        if (max_p > 0) {
+          actionButton("manage_profiles_from_prompt2", "Add Personas",
+                       icon = icon("plus"),
+                       style = "background: #8E44AD; color: white; border: none;
+                                border-radius: 8px; padding: 8px 20px;
+                                font-weight: 600;")
+        } else {
+          div(
+            style = "margin-top: 10px;",
+            p(style = "font-size: 13px; color: #718096; margin-bottom: 10px;",
+              "Upgrade your plan to unlock persona scoring."),
+            actionButton("upgrade_btn_from_prompt_personas", "View Plans",
+                         icon = icon("arrow-up"),
+                         style = "background: #8E44AD; color: white; border: none;
+                                  border-radius: 8px; padding: 8px 20px;
+                                  font-weight: 600;")
+          )
+        }
       )
     )
   }
@@ -913,17 +917,21 @@ output$prompt_overview_profiles_section <- renderUI({
       
       div(
         style = paste0(
-          "flex: 1; min-width: 200px; cursor: pointer; border-radius: 12px; ",
-          "transition: all 0.2s ease; ",
+          "flex: 1; min-width: 200px; cursor: pointer;
+           border-radius: 12px; transition: all 0.2s ease; ",
           if (is_selected) "outline: 3px solid #8E44AD; outline-offset: 2px;" else ""
         ),
         onclick = sprintf(
-          "Shiny.setInputValue('prompt_profile_card_click', %d, {priority: 'event'})", pid
-        ),
+          "Shiny.setInputValue('prompt_profile_card_click', %d,
+           {priority: 'event'})", pid),
         uiOutput(paste0("prompt_overview_profile_card_", pid))
       )
     })
   )
+})
+
+observeEvent(input$upgrade_btn_from_prompt_personas, {
+  shinyjs::click("upgrade_btn")
 })
 
 # ============================================

@@ -91,7 +91,8 @@ tab_brand_overview <- tabItem(
                 type = 4, color = "#667eea"
               )
             )
-          )
+          ),
+          div(id = "leaderboard_sentinel", style = "height: 1px; margin: 0; padding: 0;")
         )
       )
     )
@@ -161,26 +162,17 @@ tab_brand_overview <- tabItem(
         style = "border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); 
                padding: 20px;",
         div(
-          style = "display: flex; justify-content: space-between; 
-                 align-items: center; margin-bottom: 15px;",
-          div(
-            style = "display: flex; align-items: center; gap: 12px;",
-            h4(style = "margin: 0; font-weight: 600; color: #2d3748;",
-               "Customer persona scores"),
-            tags$span(
-              style = "background: #8E44AD; color: white; font-size: 10px; 
-                     padding: 3px 10px; border-radius: 10px; font-weight: 600;
-                     letter-spacing: 0.5px;",
-              "ENTERPRISE"
-            )
-          ),
+          style = "display: flex; justify-content: space-between;
+           align-items: center; margin-bottom: 15px;",
+          h4(style = "margin: 0; font-weight: 600; color: #2d3748;",
+             "Customer Persona Scores"),
           actionButton(
             "manage_profiles_from_brand",
-            "Manage personas",
-            icon = icon("users"),
-            style = "background: #8E44AD; color: white; border: none; 
-                   border-radius: 8px; padding: 6px 14px; font-weight: 600;
-                   font-size: 13px;"
+            "Manage Personas",
+            icon  = icon("users"),
+            style = "background: #8E44AD; color: white; border: none;
+             border-radius: 8px; padding: 6px 14px; font-weight: 600;
+             font-size: 13px;"
           )
         ),
         

@@ -48,43 +48,60 @@ calculate_persistence_score <- function(brand_name,
   # Most recent presence score
   latest_presence <- tail(presence_values, 1)
   
-  daily_delta <- 100 * ((presence_values %>%
-                           tail(1)) -
-                          (presence_values %>%
-                             tail(2) %>%
-                             head(1))) /
-    (presence_values %>%
-       tail(2) %>%
-       head(1))
+  # Daily % change (guard against division by zero)
+  prev_presence <- tail(presence_values, 2) %>% head(1)
+  daily_delta <- if (length(prev_presence) > 0 && prev_presence != 0) {
+    100 * (latest_presence - prev_presence) / prev_presence
+  } else {
+    0
+  }
   
-  # Calculate coefficient of variation
-  cv <- calculate_coefficient_of_variation(presence_values)
+  # ── Weighted CV — recent scores matter more ───────────────────────────
+  # Linear weights: oldest = 1, newest = n
+  n       <- length(presence_values)
+  weights <- weights <- 2^(seq_len(n) - 1)
+  
+  w_mean <- sum(weights * presence_values) / sum(weights)
+  
+  cv <- if (w_mean == 0) {
+    # All zeros — no meaningful presence at all
+    NULL
+  } else {
+    w_var <- sum(weights * (presence_values - w_mean)^2) / sum(weights)
+    w_sd  <- sqrt(w_var)
+    min(w_sd / w_mean, 1)   # cap at 1 so score never goes negative
+  }
   
   # Persistence = (1 - CV) × latest presence score
   persistence <- if (!is.null(cv)) {
     max(0, (1 - cv) * latest_presence)
   } else {
+    # No meaningful history — use latest score directly
     latest_presence
   }
   
-  # Interpretation (thresholds relative to latest presence)
-  stability_ratio <- if (latest_presence > 0) persistence / latest_presence else 0
+  # Interpretation
+  stability_ratio <- if (latest_presence > 0) {
+    persistence / latest_presence
+  } else {
+    0
+  }
   
   interpretation <- case_when(
     stability_ratio >= 0.85 ~ "Excellent - Highly stable and consistent presence",
     stability_ratio >= 0.70 ~ "Good - Stable presence with minor variations",
     stability_ratio >= 0.55 ~ "Fair - Moderate stability",
     stability_ratio >= 0.40 ~ "Poor - Significant fluctuations",
-    TRUE ~ "Very Poor - Highly unstable presence"
+    TRUE                    ~ "Very Poor - Highly unstable presence"
   )
   
   persistence_out <- list(
-    brand_name = brand_name,
-    score = round(persistence, 2),
+    brand_name               = brand_name,
+    score                    = round(persistence, 2),
     coefficient_of_variation = if (!is.null(cv)) round(cv, 4) else 0.0,
-    interpretation = interpretation,
-    daily_perc_change = daily_delta,
-    timestamp = Sys.time()
+    interpretation           = interpretation,
+    daily_perc_change        = daily_delta,
+    timestamp                = Sys.time()
   )
   
   return(persistence_out)

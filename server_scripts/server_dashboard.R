@@ -1148,7 +1148,7 @@ output$dash_rankings_table <- renderUI({
 
 observe({
   req(rv$logged_in, rv$login_id)
-  rv$queries_refresh
+  rv$queries_refresh  # explicitly declare dependency
   
   queries <- get_user_tracked_queries(rv$login_id)
   
@@ -1160,9 +1160,17 @@ observe({
   
   query_choices <- setNames(queries$query_string, queries$query_string)
   
+  # Keep current selection if it still exists, otherwise use first
+  current <- isolate(input$dash_query_select)
+  selected <- if (!is.null(current) && current %in% query_choices) {
+    current
+  } else {
+    query_choices[1]
+  }
+  
   updateSelectInput(session, "dash_query_select",
-                    choices = query_choices,
-                    selected = query_choices[1])
+                    choices  = query_choices,
+                    selected = selected)
 })
 
 # ============================================
@@ -3116,3 +3124,124 @@ output$sticky_score_bar_ui <- renderUI({
   )
 })
 
+# ============================================
+# Sticky leaderboard — shown in sidebar when leaderboard scrolls out of view
+# ============================================
+
+output$sticky_leaderboard_ui <- renderUI({
+  req(rv$logged_in, rv$login_id, rv$brand_name)
+  
+  scores <- tryCatch(dash_latest_scores(), error = function(e) NULL)
+  if (is.null(scores) || nrow(scores) == 0) return(NULL)
+  
+  # Apply zero-score cleaning
+  scores <- scores %>%
+    mutate(
+      any_p_zero = (
+        (is.na(presence_score)    | presence_score    == 0) |
+          (is.na(perception_score)  | perception_score  == 0) |
+          (is.na(prestige_score)    | prestige_score    == 0) |
+          (is.na(persistence_score) | persistence_score == 0)
+      ),
+      airr_score = ifelse(any_p_zero | airr_score == 0, NA_real_, airr_score)
+    ) %>%
+    select(-any_p_zero) %>%
+    arrange(desc(airr_score)) %>%
+    mutate(rank = row_number())
+  
+  fmt <- function(val, digits = 1) {
+    if (is.na(val) || is.null(val)) return("NA")
+    round(val, digits)
+  }
+  
+  score_color <- function(val) {
+    if (is.na(val) || is.null(val)) return("#718096")
+    if (val >= 70) "#48bb78" else if (val >= 40) "#ecc94b" else "#fc8181"
+  }
+  
+  rows <- lapply(seq_len(nrow(scores)), function(i) {
+    row     <- scores[i, ]
+    is_main <- isTRUE(row$main_brand_flag)
+    
+    rank_style <- if (i == 1) {
+      "background: linear-gradient(135deg, #f6d365, #fda085); color: white;"
+    } else if (i == 2) {
+      "background: linear-gradient(135deg, #c0c0c0, #e0e0e0); color: #555;"
+    } else if (i == 3) {
+      "background: linear-gradient(135deg, #cd7f32, #e6a566); color: white;"
+    } else {
+      "background: rgba(255,255,255,0.08); color: #9E9E9E;"
+    }
+    
+    div(
+      style = paste0(
+        "display: flex; align-items: center; gap: 6px; padding: 5px 0; ",
+        "border-bottom: 1px solid rgba(255,255,255,0.06); ",
+        if (is_main) "background: rgba(212,168,67,0.06); border-radius: 5px; padding: 5px 4px;" else ""
+      ),
+      
+      # Rank badge
+      div(
+        style = paste0(
+          "flex: 0 0 18px; height: 18px; border-radius: 50%; ",
+          "display: flex; align-items: center; justify-content: center; ",
+          "font-weight: 700; font-size: 9px; flex-shrink: 0; ", rank_style
+        ),
+        i
+      ),
+      
+      # Brand name
+      div(
+        style = "flex: 1; min-width: 0;",
+        tags$span(
+          style = paste0(
+            "font-size: 11px; font-weight: ", if (is_main) "700" else "500", "; ",
+            "color: ", if (is_main) "#D4A843" else "#9E9E9E", "; ",
+            "white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ",
+            "display: block;"
+          ),
+          if (is_main) paste0("★ ", row$brand_name) else row$brand_name
+        )
+      ),
+      
+      # AiRR score
+      div(
+        style = paste0(
+          "flex: 0 0 32px; text-align: right; font-size: 13px; font-weight: 800; ",
+          "color: ", score_color(row$airr_score), "; flex-shrink: 0;"
+        ),
+        fmt(row$airr_score)
+      )
+    )
+  })
+  
+  div(
+    style = "background: rgba(212,168,67,0.06);
+             border: 1px solid rgba(212,168,67,0.2);
+             border-radius: 10px; padding: 10px 12px;
+             margin-top: 8px;",
+    
+    # Header
+    div(
+      style = "display: flex; align-items: center; gap: 6px; margin-bottom: 8px;",
+      icon("trophy", style = "font-size: 10px; color: #D4A843;"),
+      tags$span(
+        style = "font-size: 10px; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: 0.8px; color: #D4A843;",
+        "Leaderboard"
+      ),
+      div(
+        style = "margin-left: auto; font-size: 10px; color: #9E9E9E;",
+        paste0(nrow(scores), " brand", if (nrow(scores) != 1) "s" else "")
+      )
+    ),
+    
+    # Scrollable rows
+    div(
+      style = "overflow-y: auto; max-height: 240px;
+               scrollbar-width: thin;
+               scrollbar-color: rgba(212,168,67,0.3) transparent;",
+      do.call(tagList, rows)
+    )
+  )
+})

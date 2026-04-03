@@ -10,19 +10,22 @@ server <- function(input, output, session) {
   
   # Reactive values
   rv <- reactiveValues(
-    logged_in = FALSE,
-    login_id = NULL,
-    email = NULL,
-    brand_id = NULL,
-    brand_name = NULL,
-    auth_message = NULL,
-    auth_type = NULL,
-    queries_refresh = 0,
-    brands_refresh = 0,
+    logged_in           = FALSE,
+    login_id            = NULL,
+    email               = NULL,
+    brand_id            = NULL,
+    brand_name          = NULL,
+    auth_message        = NULL,
+    auth_type           = NULL,
+    queries_refresh     = 0,
+    brands_refresh      = 0,
     onboarding_complete = FALSE,
-    is_admin = FALSE,          # <-- new
-    admin_email = NULL,        # <-- new
-    admin_login_id = NULL      # <-- new
+    is_admin            = FALSE,
+    admin_email         = NULL,
+    admin_login_id      = NULL,
+    is_demo             = FALSE,      # <-- new
+    demo_login_id       = NULL,       # <-- new
+    demo_targets        = NULL        # <-- new
   )
   
   # Source server sub-scripts

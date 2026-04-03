@@ -442,3 +442,64 @@ DROP CONSTRAINT IF EXISTS fact_airr_history_brand_id_date_key;")
 dbExecute(pool, "ALTER TABLE fact_airr_history
 ADD CONSTRAINT fact_airr_history_brand_login_date_key
 UNIQUE (brand_id, login_id, date);")
+
+dbExecute(pool, "CREATE TABLE dim_api_keys (
+  api_key_id       SERIAL PRIMARY KEY,
+  login_id         INTEGER NOT NULL REFERENCES dim_user(login_id),
+  api_key          VARCHAR(64) NOT NULL UNIQUE,
+  key_name         VARCHAR(100),
+  date_created     DATE NOT NULL DEFAULT CURRENT_DATE,
+  date_last_used   TIMESTAMP,
+  date_revoked     TIMESTAMP,
+  is_active        BOOLEAN NOT NULL DEFAULT TRUE
+);")
+
+
+dbExecute(pool, "CREATE INDEX idx_api_keys_login    ON dim_api_keys(login_id);")
+dbExecute(pool, "CREATE INDEX idx_api_keys_key      ON dim_api_keys(api_key);")
+dbExecute(pool, "CREATE INDEX idx_api_keys_active   ON dim_api_keys(is_active);")
+
+dbExecute(pool, "
+CREATE TABLE user_purchases (
+  id               SERIAL PRIMARY KEY,
+  email            TEXT NOT NULL,
+  access_level     TEXT NOT NULL,  -- 'basic', 'premium', 'enterprise'
+  amount           NUMERIC,
+  purchase_date    TIMESTAMP DEFAULT NOW(),
+  stripe_session_id TEXT UNIQUE,
+  is_active        BOOLEAN DEFAULT TRUE
+);
+")
+
+
+dbExecute(pool, "
+  ALTER TABLE dim_subscription 
+  ADD COLUMN num_personas_included INT;
+")
+
+# Step 2: Delete existing rows so we can reinsert with correct data
+dbExecute(pool, "
+  DELETE FROM dim_subscription;
+")
+
+# Step 3: Reset the sequence if using SERIAL/auto-increment
+dbExecute(pool, "
+  ALTER SEQUENCE dim_subscription_subscription_level_id_seq RESTART WITH 1;
+")
+
+# Step 4: Insert the new correct data
+dbExecute(pool, "
+  INSERT INTO dim_subscription 
+    (subscription_level_id, subscription_name, num_prompts_included, num_competitors_included, num_personas_included)
+  VALUES
+    (1, 'Starter', 1,  5,  1),
+    (2, 'Pro',     15, 10, 7),
+    (3, 'Custom',  15, 10, 7);
+")
+
+dbExecute(pool, "
+  INSERT INTO dim_subscription 
+    (subscription_level_id, subscription_name, num_prompts_included, num_competitors_included, num_personas_included)
+  VALUES
+    (4, 'AiRR test', 1,  1,  1);
+")

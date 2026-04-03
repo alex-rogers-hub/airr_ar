@@ -1,7 +1,6 @@
 # ============================================
 # upload_functions.R
 # All functions take an explicit `con` parameter
-# Never relies on a global `con` variable
 # ============================================
 
 AIRR_WEIGHTS <- list(
@@ -10,11 +9,6 @@ AIRR_WEIGHTS <- list(
   prestige    = 0.25,
   persistence = 0.2
 )
-
-# ============================================
-# Connection helper — creates a fresh direct connection
-# Used by daily loops and standalone scripts
-# ============================================
 
 make_con <- function() {
   dbConnect(
@@ -42,32 +36,28 @@ get_or_create_brand_id <- function(con, brand_name) {
   result <- dbGetQuery(con,
                        "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1)",
                        params = list(brand_name))
-  if (nrow(result) == 0) {
-    return(add_brand(con, brand_name))
-  }
+  if (nrow(result) == 0) return(add_brand(con, brand_name))
   return(result$brand_id)
 }
 
 # ============================================
-# Upload daily refresh (presence/perception/prestige)
+# Upload daily refresh
 # ============================================
 
-upload_daily_refresh <- function(con, brand_name, login_id, input_data, run_date) {
-  
+upload_daily_refresh <- function(con, brand_name, login_id,
+                                 input_data, run_date) {
   dbBegin(con)
-  
   tryCatch({
     score_date <- run_date
     air_scores <- input_data
     brand_id   <- get_or_create_brand_id(con, brand_name)
     
-    # Presence
     presence <- air_scores$presence
     dbExecute(con, "
       INSERT INTO fact_presence_history (
         brand_id, login_id, date, overall_score, simple_mention_rate,
         total_responses, responses_with_mentions, interpretation, stability
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
       ON CONFLICT (brand_id, login_id, date) DO UPDATE SET
         overall_score           = EXCLUDED.overall_score,
         simple_mention_rate     = EXCLUDED.simple_mention_rate,
@@ -81,15 +71,15 @@ upload_daily_refresh <- function(con, brand_name, login_id, input_data, run_date
                 presence$total_responses, presence$responses_with_mentions,
                 presence$interpretation, presence$stability
               ))
-    message(sprintf("  ✓ Presence: %s / user %d", brand_name, login_id))
+    message(sprintf("  \u2713 Presence: %s / user %d", brand_name, login_id))
     
-    # Perception
     perception <- air_scores$perception
     dbExecute(con, "
       INSERT INTO fact_perception_history (
-        brand_id, login_id, date, perception_score, perception_accuracy_score,
-        perception_sentiment_score, prestige_accuracy_interpretation
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        brand_id, login_id, date, perception_score,
+        perception_accuracy_score, perception_sentiment_score,
+        prestige_accuracy_interpretation
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
       ON CONFLICT (brand_id, login_id, date) DO UPDATE SET
         perception_score                 = EXCLUDED.perception_score,
         perception_accuracy_score        = EXCLUDED.perception_accuracy_score,
@@ -98,17 +88,18 @@ upload_daily_refresh <- function(con, brand_name, login_id, input_data, run_date
               params = list(
                 brand_id, login_id, score_date,
                 perception$perception_score, perception$perception_accuracy_score,
-                perception$perception_sentiment_score, perception$prestige_accuracy_interpretation
+                perception$perception_sentiment_score,
+                perception$prestige_accuracy_interpretation
               ))
-    message(sprintf("  ✓ Perception: %s / user %d", brand_name, login_id))
+    message(sprintf("  \u2713 Perception: %s / user %d", brand_name, login_id))
     
-    # Prestige
     prestige <- air_scores$prestige
     dbExecute(con, "
       INSERT INTO fact_prestige_history (
         brand_id, login_id, date, prestige_score, prestige_rank_score,
-        prestige_rank_comps_brands, prestige_authority_score, prestige_leadership_score
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        prestige_rank_comps_brands, prestige_authority_score,
+        prestige_leadership_score
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
       ON CONFLICT (brand_id, login_id, date) DO UPDATE SET
         prestige_score             = EXCLUDED.prestige_score,
         prestige_rank_score        = EXCLUDED.prestige_rank_score,
@@ -121,15 +112,17 @@ upload_daily_refresh <- function(con, brand_name, login_id, input_data, run_date
                 paste(prestige$prestige_rank_comps$brand, collapse = " | "),
                 prestige$prestige_authority_score, prestige$prestige_leadership_score
               ))
-    message(sprintf("  ✓ Prestige: %s / user %d", brand_name, login_id))
+    message(sprintf("  \u2713 Prestige: %s / user %d", brand_name, login_id))
     
     dbCommit(con)
-    message(sprintf("✓✓ All scores inserted: %s / user %d", brand_name, login_id))
+    message(sprintf("\u2713\u2713 All scores inserted: %s / user %d",
+                    brand_name, login_id))
     return(TRUE)
     
   }, error = function(e) {
     dbRollback(con)
-    warning(sprintf("✗ Upload failed for %s / user %d: %s", brand_name, login_id, e$message))
+    warning(sprintf("\u2717 Upload failed for %s / user %d: %s",
+                    brand_name, login_id, e$message))
     return(FALSE)
   })
 }
@@ -140,16 +133,17 @@ upload_daily_refresh <- function(con, brand_name, login_id, input_data, run_date
 
 calc_daily_persistance <- function(con, brand_name, login_id, run_date) {
   score_date  <- run_date
-  persistence <- calculate_daily_persistence(brand_name, login_id, score_date, con)
+  persistence <- calculate_daily_persistence(brand_name, login_id,
+                                             score_date, con)
   brand_id    <- get_or_create_brand_id(con, brand_name)
   
   dbBegin(con)
   tryCatch({
     dbExecute(con, "
       INSERT INTO fact_persistence_history (
-        brand_id, login_id, date, persistence_score, coefficient_of_variation,
-        interpretation, daily_perc_change
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        brand_id, login_id, date, persistence_score,
+        coefficient_of_variation, interpretation, daily_perc_change
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
       ON CONFLICT (brand_id, login_id, date) DO UPDATE SET
         persistence_score        = EXCLUDED.persistence_score,
         coefficient_of_variation = EXCLUDED.coefficient_of_variation,
@@ -161,10 +155,11 @@ calc_daily_persistance <- function(con, brand_name, login_id, run_date) {
                 persistence$interpretation, persistence$daily_perc_change
               ))
     dbCommit(con)
-    message(sprintf("  ✓ Persistence: %s / user %d", brand_name, login_id))
+    message(sprintf("  \u2713 Persistence: %s / user %d", brand_name, login_id))
   }, error = function(e) {
     dbRollback(con)
-    warning(sprintf("✗ Persistence failed for %s / user %d: %s", brand_name, login_id, e$message))
+    warning(sprintf("\u2717 Persistence failed for %s / user %d: %s",
+                    brand_name, login_id, e$message))
   })
 }
 
@@ -205,42 +200,44 @@ calc_daily_airr <- function(con, brand_name, login_id, run_date) {
   tryCatch({
     dbExecute(con, "
       INSERT INTO fact_airr_history (brand_id, login_id, date, airr_score)
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1,$2,$3,$4)
       ON CONFLICT (brand_id, login_id, date) DO UPDATE SET
         airr_score = EXCLUDED.airr_score",
               params = list(brand_id, login_id, score_date, airr_score))
     dbCommit(con)
-    message(sprintf("  ✓ AIRR: %s / user %d = %.1f", brand_name, login_id, airr_score))
+    message(sprintf("  \u2713 AIRR: %s / user %d = %.1f",
+                    brand_name, login_id, airr_score))
   }, error = function(e) {
     dbRollback(con)
-    warning(sprintf("✗ AIRR insert failed for %s / user %d: %s", brand_name, login_id, e$message))
+    warning(sprintf("\u2717 AIRR insert failed for %s / user %d: %s",
+                    brand_name, login_id, e$message))
   })
 }
 
 # ============================================
-# user_create_airr — main entry point for scoring a brand
-# con is passed explicitly
+# user_create_airr
 # ============================================
 
-user_create_airr <- function(con, brand_name, login_id, model = "gpt-4o-mini") {
+user_create_airr <- function(con, brand_name, login_id,
+                             model = "gpt-4o-mini") {
   message(sprintf("=== START user_create_airr: %s / user %d [%s] ===",
                   brand_name, login_id, format(Sys.time(), "%H:%M:%S")))
   brand_id <- get_or_create_brand_id(con, brand_name)
+  
   
   brand_info <- dbGetQuery(con,
                            "SELECT b.brand_reach, b.reach_country, b.reach_region, b.reach_postcode,
             ubt.industry
      FROM dim_brand b
      JOIN fact_user_brands_tracked ubt ON ubt.brand_id = b.brand_id
-     WHERE b.brand_id = $1
-       AND ubt.login_id = $2
+     WHERE b.brand_id = $1 AND ubt.login_id = $2
        AND ubt.date_valid_from <= CURRENT_DATE
        AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
      LIMIT 1",
                            params = list(brand_id, login_id))
   
   if (nrow(brand_info) > 0) {
-    reach    <- brand_info$brand_reach[1]   %||% "global"
+    reach    <- brand_info$brand_reach[1] %||% "global"
     country  <- brand_info$reach_country[1]
     region   <- brand_info$reach_region[1]
     postcode <- brand_info$reach_postcode[1]
@@ -250,11 +247,8 @@ user_create_airr <- function(con, brand_name, login_id, model = "gpt-4o-mini") {
     if (is.na(postcode)) postcode <- NULL
     if (is.na(industry)) industry <- NULL
   } else {
-    reach    <- "global"
-    country  <- NULL
-    region   <- NULL
-    postcode <- NULL
-    industry <- NULL
+    reach <- "global"; country <- NULL; region <- NULL
+    postcode <- NULL; industry <- NULL
   }
   
   message(sprintf("  Fetching AI responses for %s...", brand_name))
@@ -263,57 +257,67 @@ user_create_airr <- function(con, brand_name, login_id, model = "gpt-4o-mini") {
                                 brand_reach    = reach,
                                 reach_country  = country,
                                 reach_region   = region,
-                                reach_postcode = postcode)
+                                reach_postcode = postcode,
+                                brand_id       = brand_id,  # new
+                                con            = con)  
   
   message(sprintf("  Uploading scores for %s...", brand_name))
-  upload_daily_refresh(con, brand_name, login_id, airr_scores, as.Date(Sys.Date()))
+  upload_daily_refresh(con, brand_name, login_id, airr_scores,
+                       as.Date(Sys.Date()))
   calc_daily_persistance(con, brand_name, login_id, Sys.Date())
   calc_daily_airr(con, brand_name, login_id, Sys.Date())
   
   message(sprintf("=== END user_create_airr: %s / user %d [%s] ===",
-                  brand_name, login_id, format(Sys.time(), "%H:%M:%S")))
+                  brand_name, login_id,
+                  format(Sys.time(), "%H:%M:%S")))
 }
 
 # ============================================
-# create_prompt_airr — single brand + query
+# create_prompt_airr — uses aliases
 # ============================================
 
 create_prompt_airr <- function(con, brand_id, query_string, query_id_in,
                                login_id, model = "gpt-4o-mini") {
   
   brand_meta <- dbGetQuery(con,
-                           "SELECT brand_name, brand_reach, reach_country, 
-                                   reach_region, reach_postcode
-                            FROM dim_brand WHERE brand_id = $1",
+                           "SELECT brand_name, brand_reach, reach_country,
+            reach_region, reach_postcode
+     FROM dim_brand WHERE brand_id = $1",
                            params = list(brand_id))
   
   brand_name  <- brand_meta$brand_name[1]
   reach       <- brand_meta$brand_reach[1] %||% "global"
   nm_country  <- brand_meta$reach_country[1]
-  nm_region   <- brand_meta$reach_region[1]    # <-- added
+  nm_region   <- brand_meta$reach_region[1]
   nm_postcode <- brand_meta$reach_postcode[1]
   
+  # Fetch aliases
+  search_names <- get_brand_search_names(brand_id, brand_name, con)
+  message(sprintf("  Search names: %s", paste(search_names, collapse = ", ")))
+  
   message(sprintf("=== START create_prompt_airr: %s / user %d [%s] ===",
-                  brand_name, login_id, format(Sys.time(), "%H:%M:%S")))
+                  brand_name, login_id,
+                  format(Sys.time(), "%H:%M:%S")))
   
   if (!is.null(nm_country)  && is.na(nm_country))  nm_country  <- NULL
-  if (!is.null(nm_region)   && is.na(nm_region))   nm_region   <- NULL  # <-- added
+  if (!is.null(nm_region)   && is.na(nm_region))   nm_region   <- NULL
   if (!is.null(nm_postcode) && is.na(nm_postcode)) nm_postcode <- NULL
   
-  # Now passes region too
   query_string_resolved <- inject_near_me_location(
     query_string, reach, nm_country, nm_region, nm_postcode)
   
-  message(sprintf("  Resolved prompt: %s", query_string_resolved))  # helpful for debugging
+  message(sprintf("  Resolved prompt: %s", query_string_resolved))
   message(sprintf("  Fetching prompt responses for %s...", brand_name))
-  rel_responses <- prompt_queries(rep(query_string_resolved, 10), model = model)
+  rel_responses <- prompt_queries(rep(query_string_resolved, 10),
+                                  model = model)
   
   dbExecute(con,
             "INSERT INTO dim_brand_query (brand_id, query_id, date_added)
-             VALUES ($1, $2, $3) ON CONFLICT (brand_id, query_id) DO NOTHING",
+     VALUES ($1,$2,$3) ON CONFLICT (brand_id, query_id) DO NOTHING",
             params = list(brand_id, query_id_in, Sys.Date()))
   
-  presence_prompt_score   <- presence_prompt_calc(brand_name, rel_responses)
+  # Use search_names (includes aliases) for presence detection
+  presence_prompt_score   <- presence_prompt_calc(search_names, rel_responses)
   prestige_prompt_score   <- calculate_prestige_from_prompts_sep(
     brand_name    = brand_name,
     brand_id      = brand_id,
@@ -328,7 +332,7 @@ create_prompt_airr <- function(con, brand_id, query_string, query_id_in,
     INSERT INTO fact_query_history (
       brand_id, query_id, date, presence_score, perception_score,
       prestige_score, persistence_score, airr_score
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
     ON CONFLICT (brand_id, query_id, date) DO UPDATE SET
       presence_score    = EXCLUDED.presence_score,
       perception_score  = EXCLUDED.perception_score,
@@ -341,8 +345,8 @@ create_prompt_airr <- function(con, brand_id, query_string, query_id_in,
   
   presence_history <- dbGetQuery(con,
                                  "SELECT date, presence_score FROM fact_query_history
-                                  WHERE brand_id = $1 AND date <= $2 
-                                    AND query_id = $3 ORDER BY date",
+     WHERE brand_id = $1 AND date <= $2 AND query_id = $3
+     ORDER BY date",
                                  params = list(brand_id, Sys.Date(), query_id_in))
   
   persistence_prompt_score <- if (nrow(presence_history) < 5) {
@@ -353,8 +357,8 @@ create_prompt_airr <- function(con, brand_id, query_string, query_id_in,
   
   todays_scores <- dbGetQuery(con,
                               "SELECT presence_score, perception_score, prestige_score
-                               FROM fact_query_history
-                               WHERE brand_id = $1 AND date = $2 AND query_id = $3",
+     FROM fact_query_history
+     WHERE brand_id = $1 AND date = $2 AND query_id = $3",
                               params = list(brand_id, Sys.Date(), query_id_in))
   
   airr_score <- todays_scores$perception_score * AIRR_WEIGHTS$perception +
@@ -364,36 +368,38 @@ create_prompt_airr <- function(con, brand_id, query_string, query_id_in,
   
   dbExecute(con,
             "UPDATE fact_query_history
-             SET persistence_score = $1, airr_score = $2
-             WHERE brand_id = $3 AND date = $4 AND query_id = $5",
+     SET persistence_score = $1, airr_score = $2
+     WHERE brand_id = $3 AND date = $4 AND query_id = $5",
             params = list(persistence_prompt_score, airr_score,
                           brand_id, Sys.Date(), query_id_in))
   
-  message(sprintf("  ✓ Prompt AIRR: brand %d, query %d", brand_id, query_id_in))
+  message(sprintf("  \u2713 Prompt AIRR: brand %d, query %d",
+                  brand_id, query_id_in))
   message(sprintf("=== END create_prompt_airr: %s / user %d [%s] ===",
-                  brand_name, login_id, format(Sys.time(), "%H:%M:%S")))
+                  brand_name, login_id,
+                  format(Sys.time(), "%H:%M:%S")))
 }
 
 # ============================================
-# create_prompt_airr_multiple — multiple brands + one query
+# create_prompt_airr_multiple — uses aliases
 # ============================================
 
 create_prompt_airr_multiple <- function(con, brand_ids, query_string,
                                         query_id_in, login_id,
                                         model = "gpt-4o-mini") {
   
-  message(sprintf("=== create_prompt_airr_multiple: %d brands ===", length(brand_ids)))
+  message(sprintf("=== create_prompt_airr_multiple: %d brands ===",
+                  length(brand_ids)))
   
   placeholders   <- paste0("$", seq_along(brand_ids), collapse = ", ")
   all_brand_meta <- dbGetQuery(con,
-                               sprintf("SELECT brand_id, brand_name, brand_reach, 
-                                               reach_country, reach_region, reach_postcode
-                                        FROM dim_brand WHERE brand_id IN (%s)", 
-                                       placeholders),
+                               sprintf("SELECT brand_id, brand_name, brand_reach,
+                    reach_country, reach_region, reach_postcode
+             FROM dim_brand WHERE brand_id IN (%s)", placeholders),
                                params = as.list(brand_ids))
   
-  # FIX: added reach_region parameter
-  all_brand_meta$query_resolved <- mapply(function(reach, country, region, postcode) {
+  all_brand_meta$query_resolved <- mapply(function(reach, country,
+                                                   region, postcode) {
     country  <- if (is.na(country))  NULL else country
     region   <- if (is.na(region))   NULL else region
     postcode <- if (is.na(postcode)) NULL else postcode
@@ -404,24 +410,17 @@ create_prompt_airr_multiple <- function(con, brand_ids, query_string,
   all_brand_meta$reach_region,
   all_brand_meta$reach_postcode)
   
-  # Log resolved prompts for debugging
   unique_resolved <- unique(all_brand_meta$query_resolved)
-  for (uq in unique_resolved) {
-    message(sprintf("  Resolved prompt: %s", uq))
-  }
-  
-  # Fetch responses once per unique resolved prompt
   responses_cache <- list()
   for (uq in unique_resolved) {
     message(sprintf("  Fetching responses for: %s", substr(uq, 1, 60)))
     responses_cache[[uq]] <- prompt_queries(rep(uq, 10), model = model)
   }
   
-  # Ensure dim_brand_query links
   for (bid in brand_ids) {
     dbExecute(con,
               "INSERT INTO dim_brand_query (brand_id, query_id, date_added)
-               VALUES ($1, $2, $3) ON CONFLICT (brand_id, query_id) DO NOTHING",
+       VALUES ($1,$2,$3) ON CONFLICT (brand_id, query_id) DO NOTHING",
               params = list(bid, query_id_in, Sys.Date()))
   }
   
@@ -437,19 +436,21 @@ create_prompt_airr_multiple <- function(con, brand_ids, query_string,
     brand_name    <- meta$brand_name[1]
     rel_responses <- responses_cache[[meta$query_resolved[1]]]
     
-    message(sprintf("  [%d/%d] Scoring %s...", idx, length(brand_ids), brand_name))
+    # Fetch aliases for presence detection
+    search_names <- get_brand_search_names(bid, brand_name, con)
     
-    presence_prompt_score   <- presence_prompt_calc(brand_name, rel_responses)
+    message(sprintf("  [%d/%d] Scoring %s (aliases: %s)...",
+                    idx, length(brand_ids), brand_name,
+                    paste(search_names, collapse = ", ")))
     
-    # FIX: was using brand_id (undefined) instead of bid
+    presence_prompt_score   <- presence_prompt_calc(search_names, rel_responses)
     prestige_prompt_score   <- calculate_prestige_from_prompts_sep(
       brand_name    = brand_name,
-      brand_id      = bid,            # <-- was brand_id (bug)
+      brand_id      = bid,
       login_id      = login_id,
       rel_responses = rel_responses,
       db_con        = con
     )
-    
     perception_prompt_score <- calculate_perception_from_prompts_sep(
       brand_name, bid, rel_responses)
     
@@ -457,7 +458,7 @@ create_prompt_airr_multiple <- function(con, brand_ids, query_string,
       INSERT INTO fact_query_history (
         brand_id, query_id, date, presence_score, perception_score,
         prestige_score, persistence_score, airr_score
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
       ON CONFLICT (brand_id, query_id, date) DO UPDATE SET
         presence_score    = EXCLUDED.presence_score,
         perception_score  = EXCLUDED.perception_score,
@@ -468,45 +469,41 @@ create_prompt_airr_multiple <- function(con, brand_ids, query_string,
                             presence_prompt_score, perception_prompt_score,
                             prestige_prompt_score, 0, 0))
     
-    presence_history <- dbGetQuery(con,
-                                   "SELECT date, presence_score FROM fact_query_history
-                                    WHERE brand_id = $1 AND date <= $2 
-                                      AND query_id = $3 ORDER BY date",
-                                   params = list(bid, Sys.Date(), query_id_in))
+    ph <- dbGetQuery(con,
+                     "SELECT date, presence_score FROM fact_query_history
+       WHERE brand_id = $1 AND date <= $2 AND query_id = $3
+       ORDER BY date",
+                     params = list(bid, Sys.Date(), query_id_in))
     
-    persistence_prompt_score <- if (nrow(presence_history) < 5) {
-      presence_prompt_score
-    } else {
-      calculate_daily_persistence_sep(presence_history)
-    }
+    persistence_prompt_score <- if (nrow(ph) < 5) presence_prompt_score else
+      calculate_daily_persistence_sep(ph)
     
-    todays_scores <- dbGetQuery(con,
-                                "SELECT presence_score, perception_score, prestige_score
-                                 FROM fact_query_history
-                                 WHERE brand_id = $1 AND date = $2 AND query_id = $3",
-                                params = list(bid, Sys.Date(), query_id_in))
+    ts <- dbGetQuery(con,
+                     "SELECT presence_score, perception_score, prestige_score
+       FROM fact_query_history
+       WHERE brand_id = $1 AND date = $2 AND query_id = $3",
+                     params = list(bid, Sys.Date(), query_id_in))
     
-    airr_score <- todays_scores$perception_score * AIRR_WEIGHTS$perception +
-      todays_scores$presence_score   * AIRR_WEIGHTS$presence   +
-      todays_scores$prestige_score   * AIRR_WEIGHTS$prestige   +
-      persistence_prompt_score       * AIRR_WEIGHTS$persistence
+    airr <- ts$perception_score * AIRR_WEIGHTS$perception +
+      ts$presence_score   * AIRR_WEIGHTS$presence   +
+      ts$prestige_score   * AIRR_WEIGHTS$prestige   +
+      persistence_prompt_score * AIRR_WEIGHTS$persistence
     
     dbExecute(con,
               "UPDATE fact_query_history
-               SET persistence_score = $1, airr_score = $2
-               WHERE brand_id = $3 AND date = $4 AND query_id = $5",
-              params = list(persistence_prompt_score, airr_score,
+       SET persistence_score = $1, airr_score = $2
+       WHERE brand_id = $3 AND date = $4 AND query_id = $5",
+              params = list(persistence_prompt_score, airr,
                             bid, Sys.Date(), query_id_in))
     
-    message(sprintf("    ✓ %s done", brand_name))
+    message(sprintf("    \u2713 %s done", brand_name))
   }
   
   message("=== create_prompt_airr_multiple completed ===")
 }
 
 # ============================================
-# DAILY REFRESH LOOP — uses its own connection
-# Run standalone on worker server, not from Shiny
+# DAILY REFRESH LOOP
 # ============================================
 
 daily_refresh_loop <- function(model = "gpt-4o-mini") {
@@ -533,13 +530,14 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
     
     tryCatch({
       t0 <- Sys.time()
-      message(sprintf("\n[%d/%d] %s / user %d...", i, nrow(user_brand_list), brand, lid))
+      message(sprintf("\n[%d/%d] %s / user %d...",
+                      i, nrow(user_brand_list), brand, lid))
       user_create_airr(con, brand, lid, model)
-      message(sprintf("  ✓ Done in %.1fs",
+      message(sprintf("  \u2713 Done in %.1fs",
                       as.numeric(difftime(Sys.time(), t0, units = "secs"))))
     }, error = function(e) {
       failed <<- c(failed, paste0(brand, "/user:", lid))
-      message(sprintf("  ✗ Failed: %s", e$message))
+      message(sprintf("  \u2717 Failed: %s", e$message))
     })
   }
   
@@ -552,15 +550,14 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
     JOIN dim_customer_profile dcp ON dcp.profile_id = upt.profile_id
     JOIN fact_user_sub_level fus ON fus.login_id = upt.login_id
     JOIN dim_subscription ds ON ds.subscription_level_id = fus.subscription_level_id
-    WHERE ds.subscription_name = 'Enterprise'
-      AND upt.date_valid_from <= CURRENT_DATE
+    WHERE upt.date_valid_from <= CURRENT_DATE
       AND (upt.date_valid_to IS NULL OR upt.date_valid_to > CURRENT_DATE)
       AND fus.date_valid_from <= CURRENT_DATE
       AND (fus.date_valid_to IS NULL OR fus.date_valid_to > CURRENT_DATE)
     ORDER BY upt.login_id, upt.profile_id")
   
   if (nrow(active_profiles) == 0) {
-    message("No active enterprise profiles.")
+    message("No active profiles.")
   } else {
     profile_failed <- c()
     for (p in seq_len(nrow(active_profiles))) {
@@ -572,21 +569,22 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
         message(sprintf("\n  [%d/%d] %s (login: %d)...",
                         p, nrow(active_profiles), pname, lid))
         score_profile(con, lid, pid, model)
-        message(sprintf("  ✓ Done in %.1fs",
+        message(sprintf("  \u2713 Done in %.1fs",
                         as.numeric(difftime(Sys.time(), t0, units = "secs"))))
       }, error = function(e) {
         profile_failed <<- c(profile_failed, pname)
-        message(sprintf("  ✗ Failed: %s", e$message))
+        message(sprintf("  \u2717 Failed: %s", e$message))
       })
     }
-    
     if (length(profile_failed) > 0) {
-      message(sprintf("\nProfile failures: %s", paste(profile_failed, collapse = ", ")))
+      message(sprintf("\nProfile failures: %s",
+                      paste(profile_failed, collapse = ", ")))
     }
   }
   
   if (length(failed) > 0) {
-    message(sprintf("\n%d brand failures: %s", length(failed), paste(failed, collapse = ", ")))
+    message(sprintf("\n%d brand failures: %s",
+                    length(failed), paste(failed, collapse = ", ")))
   } else {
     message("\nAll brands completed!")
   }
@@ -595,7 +593,7 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
 }
 
 # ============================================
-# DAILY PROMPT LOOP — uses its own connection
+# DAILY PROMPT LOOP — uses aliases
 # ============================================
 
 daily_prompt_loop <- function(model = "gpt-4o-mini") {
@@ -616,7 +614,8 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
     return(invisible(c()))
   }
   
-  message(sprintf("=== Daily Prompt Loop: %d queries ===", nrow(active_queries)))
+  message(sprintf("=== Daily Prompt Loop: %d queries ===",
+                  nrow(active_queries)))
   failed <- c()
   
   for (q in seq_len(nrow(active_queries))) {
@@ -625,22 +624,19 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
     
     tryCatch({
       message(sprintf("\n[%d/%d] Query: %s (ID: %d)...",
-                      q, nrow(active_queries), substr(qstring, 1, 50), qid))
+                      q, nrow(active_queries),
+                      substr(qstring, 1, 50), qid))
       
-      # FIX: join through dim_brand_query to only get brands actually 
-      # linked to this query, not all brands for users who track the query
       brands_for_query <- dbGetQuery(con, "
         SELECT DISTINCT b.brand_id, b.brand_name,
-               b.brand_reach, b.reach_country, b.reach_region, b.reach_postcode,
-               ubt.login_id
+               b.brand_reach, b.reach_country, b.reach_region,
+               b.reach_postcode, ubt.login_id
         FROM fact_user_queries_tracked uqt
-        JOIN fact_user_brands_tracked ubt 
+        JOIN fact_user_brands_tracked ubt
           ON uqt.login_id = ubt.login_id
-        JOIN dim_brand b 
-          ON b.brand_id = ubt.brand_id
-        JOIN dim_brand_query dbq 
-          ON dbq.brand_id = b.brand_id 
-          AND dbq.query_id = uqt.query_id
+        JOIN dim_brand b ON b.brand_id = ubt.brand_id
+        JOIN dim_brand_query dbq
+          ON dbq.brand_id = b.brand_id AND dbq.query_id = uqt.query_id
         WHERE uqt.query_id = $1
           AND uqt.date_valid_from <= CURRENT_DATE
           AND (uqt.date_valid_to IS NULL OR uqt.date_valid_to > CURRENT_DATE)
@@ -654,7 +650,8 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
         next
       }
       
-      message(sprintf("  %d brand/user combinations to score", nrow(brands_for_query)))
+      message(sprintf("  %d brand/user combinations to score",
+                      nrow(brands_for_query)))
       
       brands_for_query$query_resolved <- mapply(
         function(reach, country, region, postcode) {
@@ -669,18 +666,17 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
         brands_for_query$reach_postcode
       )
       
-      # Fetch responses once per unique resolved prompt
       unique_prompts  <- unique(brands_for_query$query_resolved)
       responses_cache <- list()
       for (uq in unique_prompts) {
         message(sprintf("  Fetching responses for: %s", substr(uq, 1, 60)))
-        responses_cache[[uq]] <- prompt_queries(rep(uq, 10), model = model)
+        responses_cache[[uq]] <- prompt_queries(rep(uq, 10), model = model, temperature = 0.5)
       }
       
       for (bid in unique(brands_for_query$brand_id)) {
         dbExecute(con,
                   "INSERT INTO dim_brand_query (brand_id, query_id, date_added)
-                   VALUES ($1, $2, $3) ON CONFLICT (brand_id, query_id) DO NOTHING",
+           VALUES ($1,$2,$3) ON CONFLICT (brand_id, query_id) DO NOTHING",
                   params = list(bid, qid, Sys.Date()))
       }
       
@@ -690,10 +686,13 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
         lid        <- brands_for_query$login_id[b]
         rel_resp   <- responses_cache[[brands_for_query$query_resolved[b]]]
         
+        # Fetch aliases for presence detection
+        search_names <- get_brand_search_names(bid, brand_name, con)
+        
         tryCatch({
-          presence_score   <- presence_prompt_calc(brand_name, rel_resp)
+          presence_score <- presence_prompt_calc(search_names, rel_resp)
           
-          prestige_score   <- calculate_prestige_from_prompts_sep(
+          prestige_score <- calculate_prestige_from_prompts_sep(
             brand_name    = brand_name,
             brand_id      = bid,
             login_id      = lid,
@@ -708,7 +707,7 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
             INSERT INTO fact_query_history (
               brand_id, query_id, date, presence_score, perception_score,
               prestige_score, persistence_score, airr_score
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             ON CONFLICT (brand_id, query_id, date) DO UPDATE SET
               presence_score    = EXCLUDED.presence_score,
               perception_score  = EXCLUDED.perception_score,
@@ -721,8 +720,8 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
           
           ph <- dbGetQuery(con,
                            "SELECT date, presence_score FROM fact_query_history
-                            WHERE brand_id = $1 AND date <= $2
-                              AND query_id = $3 ORDER BY date",
+             WHERE brand_id = $1 AND date <= $2 AND query_id = $3
+             ORDER BY date",
                            params = list(bid, Sys.Date(), qid))
           
           persistence_score <- if (nrow(ph) < 5) presence_score else
@@ -730,8 +729,8 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
           
           ts <- dbGetQuery(con,
                            "SELECT presence_score, perception_score, prestige_score
-                            FROM fact_query_history
-                            WHERE brand_id = $1 AND date = $2 AND query_id = $3",
+             FROM fact_query_history
+             WHERE brand_id = $1 AND date = $2 AND query_id = $3",
                            params = list(bid, Sys.Date(), qid))
           
           airr <- ts$perception_score * AIRR_WEIGHTS$perception +
@@ -741,33 +740,31 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
           
           dbExecute(con,
                     "UPDATE fact_query_history
-                     SET persistence_score = $1, airr_score = $2
-                     WHERE brand_id = $3 AND date = $4 AND query_id = $5",
+             SET persistence_score = $1, airr_score = $2
+             WHERE brand_id = $3 AND date = $4 AND query_id = $5",
                     params = list(persistence_score, airr, bid, Sys.Date(), qid))
           
-          message(sprintf("    ✓ %s (user: %d)", brand_name, lid))
+          message(sprintf("    \u2713 %s (user: %d)", brand_name, lid))
           
         }, error = function(e) {
-          failed <<- c(failed, paste0("brand:", bid, "/user:", lid, "/query:", qid))
-          message(sprintf("    ✗ %s: %s", brand_name, e$message))
+          failed <<- c(failed,
+                       paste0("brand:", bid, "/user:", lid, "/query:", qid))
+          message(sprintf("    \u2717 %s: %s", brand_name, e$message))
         })
       }
       
     }, error = function(e) {
       failed <<- c(failed, paste0("query:", qid))
-      message(sprintf("  ✗ Query %d failed: %s", qid, e$message))
+      message(sprintf("  \u2717 Query %d failed: %s", qid, e$message))
     })
   }
   
   if (length(failed) > 0) {
-    message(sprintf("\n%d failures: %s", length(failed), paste(failed, collapse = ", ")))
+    message(sprintf("\n%d failures: %s",
+                    length(failed), paste(failed, collapse = ", ")))
   } else {
     message("\nAll queries completed!")
   }
   
   return(invisible(failed))
 }
-
-
-
-

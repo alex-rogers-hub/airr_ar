@@ -1053,5 +1053,136 @@ body.admin-bar-visible .right-side {
   transition: max-height 0.3s ease;
 }
 
+/* ============================================
+   FOOTER
+   ============================================ */
+#app_footer {
+  background: #1A1A1A;
+  border-top: 2px solid #D4A843;
+  padding: 20px 30px;
+  margin-top: 40px;
+  /* Full width stretch */
+  margin-left: -15px;
+  margin-right: -15px;
+  margin-bottom: -15px;
+  width: calc(100% + 30px);
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.footer-logo-wrap {
+  display: flex;
+  align-items: center;
+  opacity: 0.85;
+  transition: opacity 0.2s ease;
+}
+
+.footer-logo-wrap:hover {
+  opacity: 1;
+}
+
+.footer-text-wrap {
+  text-align: center;
+}
+
+.footer-tagline {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #D4A843;
+  letter-spacing: 0.5px;
+}
+
+.footer-copy {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: #9E9E9E;
+  letter-spacing: 0.3px;
+}
+
+@media (max-width: 768px) {
+  .footer-inner {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+/* ── Sidebar sticky leaderboard ─────────────────────────────── */
+#sidebar_sticky_leaderboard {
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.4s ease;
+}
+
+/* Webkit scrollbar for the leaderboard rows */
+#sidebar_sticky_leaderboard ::-webkit-scrollbar {
+  width: 3px;
+}
+
+#sidebar_sticky_leaderboard ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#sidebar_sticky_leaderboard ::-webkit-scrollbar-thumb {
+  background: rgba(212, 168, 67, 0.3);
+  border-radius: 3px;
+}
+
+#sidebar_sticky_leaderboard ::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 168, 67, 0.6);
+}
+
+/* ── Demo bar ───────────────────────────────────────────────── */
+body.demo-bar-visible .main-header {
+  top: 38px !important;
+}
+
+body.demo-bar-visible .main-sidebar {
+  padding-top: 88px !important;
+}
+
+body.demo-bar-visible .content-wrapper,
+body.demo-bar-visible .right-side {
+  padding-top: 38px !important;
+}
+
+#demo_switcher_bar {
+  z-index: 10000 !important;
+}
+
+/* Style the demo selectInput to match dark bar */
+#demo_switcher_bar .selectize-input {
+  background: rgba(255,255,255,0.1) !important;
+  border: 1px solid rgba(255,255,255,0.2) !important;
+  color: white !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+#demo_switcher_bar .selectize-input .item {
+  color: white !important;
+}
+
+#demo_switcher_bar .selectize-dropdown {
+  background: #2d3748 !important;
+  border: 1px solid #4a5568 !important;
+  border-radius: 6px !important;
+}
+
+#demo_switcher_bar .selectize-dropdown .option {
+  color: #e2e8f0 !important;
+}
+
+#demo_switcher_bar .selectize-dropdown .active {
+  background: #D4A843 !important;
+  color: #1A1A1A !important;
+}
 
 ")

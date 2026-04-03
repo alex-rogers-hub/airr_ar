@@ -2,7 +2,7 @@
 # Onboarding Flow
 # ============================================
 
-onboarding_step <- reactiveVal(1)
+onboarding_step <- reactiveVal(0)
 
 onboarding_data <- reactiveValues(
   brand_name     = NULL,
@@ -14,6 +14,13 @@ onboarding_data <- reactiveValues(
   competitors    = NULL,
   prompts        = NULL
 )
+
+pricing_billing_cycle <- reactiveVal("annual")
+
+observeEvent(input$pricing_billing_toggle, {
+  current <- pricing_billing_cycle()
+  pricing_billing_cycle(if (current == "annual") "monthly" else "annual")
+})
 
 setup_time_estimate <- reactive({
   n_competitors <- length(selected_competitors())
@@ -31,10 +38,9 @@ output$setup_time_estimate_ui <- renderUI({
   n_brands      <- n_competitors + 1
   
   div(
-    style = "background: rgba(102,126,234,0.06); border: 1px solid rgba(102,126,234,0.2);
+    style = "background: rgba(102,126,234,0.06);
+             border: 1px solid rgba(102,126,234,0.2);
              border-radius: 10px; padding: 14px 16px; margin-top: 16px;",
-    
-    # Header
     div(
       style = "display: flex; align-items: center; gap: 8px; margin-bottom: 10px;",
       icon("clock", style = "color: #667eea; font-size: 14px;"),
@@ -43,41 +49,38 @@ output$setup_time_estimate_ui <- renderUI({
         paste0("Your dashboard will be ready in ", est$time_str)
       )
     ),
-    
-    # Breakdown
     div(
       style = "display: flex; flex-direction: column; gap: 4px;",
-      
       div(
-        style = "display: flex; justify-content: space-between; 
+        style = "display: flex; justify-content: space-between;
                  font-size: 12px; color: #718096;",
-        tags$span(paste0(n_brands, " brand", if (n_brands != 1) "s" else "", " to score")),
+        tags$span(paste0(n_brands, " brand",
+                         if (n_brands != 1) "s" else "", " to score")),
         tags$span(paste0("~", round(est$brand_seconds / 60), " min"))
       ),
-      
       if (n_prompts > 0) {
         div(
           style = "display: flex; justify-content: space-between;
                    font-size: 12px; color: #718096;",
-          tags$span(paste0(n_prompts, " prompt", if (n_prompts != 1) "s" else "",
-                           " × ", n_brands, " brand", if (n_brands != 1) "s" else "")),
+          tags$span(paste0(n_prompts, " prompt",
+                           if (n_prompts != 1) "s" else "",
+                           " \u00d7 ", n_brands, " brand",
+                           if (n_brands != 1) "s" else "")),
           tags$span(paste0("~", round(est$prompt_seconds / 60), " min"))
         )
       },
-      
       if (n_personas > 0) {
         div(
           style = "display: flex; justify-content: space-between;
                    font-size: 12px; color: #718096;",
-          tags$span(paste0(n_personas, " persona", if (n_personas != 1) "s" else "",
-                           " × ", n_brands, " brand", if (n_brands != 1) "s" else "")),
+          tags$span(paste0(n_personas, " persona",
+                           if (n_personas != 1) "s" else "",
+                           " \u00d7 ", n_brands, " brand",
+                           if (n_brands != 1) "s" else "")),
           tags$span(paste0("~", round(est$persona_seconds / 60), " min"))
         )
       },
-      
-      # Divider
       div(style = "height: 1px; background: rgba(102,126,234,0.2); margin: 6px 0;"),
-      
       div(
         style = "display: flex; justify-content: space-between;
                  font-size: 13px; font-weight: 600; color: #667eea;",
@@ -85,24 +88,25 @@ output$setup_time_estimate_ui <- renderUI({
         tags$span(est$time_str)
       )
     ),
-    
-    # Reassurance message
     div(
       style = "margin-top: 10px; font-size: 11px; color: #a0aec0; line-height: 1.5;",
       icon("info-circle", style = "margin-right: 4px;"),
-      "Scores calculate in the background, you'll see spinners on your dashboard 
-       and results will appear automatically as they complete. 
+      "Scores calculate in the background — results appear automatically.
        You don't need to keep this page open."
     )
   )
 })
 
 # ============================================
-# Progress Bar — 6 steps
+# Progress Bar — steps 1-6 (step 0 is pricing, no bar)
 # ============================================
 
 output$onboarding_progress_bar <- renderUI({
-  step        <- onboarding_step()
+  step <- onboarding_step()
+  
+  # No progress bar on pricing step
+  if (step == 0) return(NULL)
+  
   total_steps <- 6
   pct         <- round((step - 1) / total_steps * 100)
   step_labels <- c("Brand", "Reach", "Industry", "Competitors", "Prompts", "Personas")
@@ -117,11 +121,14 @@ output$onboarding_progress_bar <- renderUI({
         bg    <- if (is_done || is_current) color else "transparent"
         
         div(
-          style = "display: flex; flex-direction: column; align-items: center; flex: 1;",
+          style = "display: flex; flex-direction: column;
+                   align-items: center; flex: 1;",
           div(
             style = paste0(
-              "width: 32px; height: 32px; border-radius: 50%; border: 2px solid ", color, "; ",
-              "background: ", bg, "; color: ", if (is_done || is_current) "white" else color, "; ",
+              "width: 32px; height: 32px; border-radius: 50%; ",
+              "border: 2px solid ", color, "; ",
+              "background: ", bg, "; ",
+              "color: ", if (is_done || is_current) "white" else color, "; ",
               "display: flex; align-items: center; justify-content: center; ",
               "font-weight: 700; font-size: 13px; margin: 0 auto 4px;"
             ),
@@ -129,7 +136,8 @@ output$onboarding_progress_bar <- renderUI({
           ),
           tags$span(
             style = paste0(
-              "font-size: 10px; font-weight: ", if (is_current) "600" else "400", "; ",
+              "font-size: 10px; font-weight: ",
+              if (is_current) "600" else "400", "; ",
               "color: ", color, "; text-transform: uppercase; letter-spacing: 0.5px;"
             ),
             step_labels[i]
@@ -138,7 +146,8 @@ output$onboarding_progress_bar <- renderUI({
       })
     ),
     div(
-      style = "height: 4px; background: #f0f0f0; border-radius: 2px; margin-bottom: 24px;",
+      style = "height: 4px; background: #f0f0f0; border-radius: 2px;
+               margin-bottom: 24px;",
       div(style = paste0(
         "height: 100%; border-radius: 2px; background: #667eea; ",
         "width: ", pct, "%; transition: width 0.4s ease;"
@@ -148,11 +157,12 @@ output$onboarding_progress_bar <- renderUI({
 })
 
 # ============================================
-# Step UI Router — 6 steps
+# Step UI Router
 # ============================================
 
 output$onboarding_step_ui <- renderUI({
   switch(as.character(onboarding_step()),
+         "0" = onboarding_step0_ui(),
          "1" = onboarding_step1_ui(),
          "2" = onboarding_step2_ui(),
          "3" = onboarding_step3_ui(),
@@ -160,6 +170,50 @@ output$onboarding_step_ui <- renderUI({
          "5" = onboarding_step5_ui(),
          "6" = onboarding_step6_ui()
   )
+})
+
+# ============================================
+# Step 0: Pricing
+# ============================================
+
+onboarding_step0_ui <- function() {
+  div(
+    style = "max-width: 1000px; margin: 0 auto;",
+    uiOutput("pricing_step_content")
+  )
+}
+
+output$pricing_step_content <- renderUI({
+  req(rv$login_id)
+  
+  sub <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  
+  if (!is.null(sub) && sub$subscription_name != "Free") {
+    onboarding_step(1)
+    return(NULL)
+  }
+  
+  tagList(
+    ui_pricing(
+      billing_cycle    = pricing_billing_cycle(),
+      prefill_email    = rv$email %||% "",
+      prefill_login_id = as.character(rv$login_id %||% "")
+    )
+    # div(
+    #   style = "text-align: center; margin-top: 16px;",
+    #   tags$button(
+    #     style = "background: none; border: none; color: #a0aec0;
+    #              cursor: pointer; font-size: 12px; text-decoration: underline;",
+    #     onclick = "Shiny.setInputValue('ob_skip_pricing',
+    #                Math.random(), {priority: 'event'})",
+    #     "Continue with free plan for now"
+    #   )
+    # )
+  )
+})
+
+observeEvent(input$ob_skip_pricing, {
+  onboarding_step(1)
 })
 
 # ============================================
@@ -205,7 +259,7 @@ onboarding_step1_ui <- function() {
 output$step1_alert <- renderUI({ NULL })
 
 observeEvent(input$ob_step1_next, {
-  brand <- trimws(input$ob_brand_name)
+  brand <- trimws(input$ob_brand_name %||% "")
   if (nchar(brand) < 2) {
     output$step1_alert <- renderUI({
       div(class = "alert alert-danger",
@@ -235,6 +289,74 @@ onboarding_step2_ui <- function() {
     div(
       class = "login-body",
       uiOutput("step2_alert"),
+      
+      # Guidance notice
+      div(
+        style = "background: rgba(102,126,234,0.06);
+                 border: 1px solid rgba(102,126,234,0.2);
+                 border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;",
+        div(
+          style = "display: flex; align-items: flex-start; gap: 10px;",
+          icon("bullseye",
+               style = "color: #667eea; font-size: 15px;
+                        flex-shrink: 0; margin-top: 2px;"),
+          div(
+            div(
+              style = "font-weight: 600; font-size: 13px; color: #2d3748;
+                       margin-bottom: 6px;",
+              "Be as specific as possible"
+            ),
+            p(
+              style = "font-size: 12px; color: #718096; margin: 0 0 8px;
+                       line-height: 1.5;",
+              "A reach that's too wide means your brand gets compared against
+               every competitor globally, making it harder to rank well and
+               producing less meaningful scores."
+            ),
+            div(
+              style = "display: flex; flex-direction: column; gap: 5px;",
+              lapply(list(
+                list(icon_name = "globe",               col = "#E74C3C",
+                     label = "Global",   bad = TRUE,
+                     desc = "Only use this if you genuinely compete worldwide"),
+                list(icon_name = "flag",                col = "#F39C12",
+                     label = "National", bad = FALSE,
+                     desc = "Good if you operate across one country"),
+                list(icon_name = "map-marker-alt",      col = "#27AE60",
+                     label = "Regional", bad = FALSE,
+                     desc = "Best for city or region-level brands"),
+                list(icon_name = "location-crosshairs", col = "#27AE60",
+                     label = "Near Me",  bad = FALSE,
+                     desc = "Best for local businesses with a single location")
+              ), function(opt) {
+                div(
+                  style = "display: flex; align-items: center; gap: 8px;
+                           font-size: 12px;",
+                  icon(opt$icon_name,
+                       style = paste0("color: ", opt$col,
+                                      "; font-size: 11px; flex-shrink: 0;",
+                                      " width: 14px; text-align: center;")),
+                  tags$span(
+                    style = paste0("font-weight: 600; color: ", opt$col,
+                                   "; flex: 0 0 70px;"),
+                    opt$label
+                  ),
+                  tags$span(style = "color: #718096;", opt$desc),
+                  if (opt$bad) {
+                    tags$span(
+                      style = "margin-left: auto; font-size: 10px; font-weight: 600;
+                               background: rgba(231,76,60,0.1); color: #E74C3C;
+                               padding: 1px 7px; border-radius: 8px; flex-shrink: 0;",
+                      "avoid unless global"
+                    )
+                  }
+                )
+              })
+            )
+          )
+        )
+      ),
+      
       uiOutput("reach_cards_ui"),
       
       conditionalPanel(
@@ -246,11 +368,9 @@ onboarding_step2_ui <- function() {
                      margin-bottom: 8px; display: block;",
             "Select your country"
           ),
-          selectInput(
-            "ob_country", NULL,
-            choices = c("Select a country..." = "", get_country_list()),
-            width = "100%"
-          )
+          selectInput("ob_country", NULL,
+                      choices = c("Select a country..." = "", get_country_list()),
+                      width = "100%")
         )
       ),
       
@@ -263,16 +383,11 @@ onboarding_step2_ui <- function() {
                      margin-bottom: 8px; display: block;",
             "Define your region"
           ),
-          p(
-            style = "font-size: 12px; color: #a0aec0; margin-bottom: 8px;",
-            "Be specific, e.g. 'The State of New York', 'Houston Texas', ",
-            "'East Coast USA', 'South West England', 'Greater London'"
-          ),
-          textInput(
-            "ob_region", NULL,
-            placeholder = "e.g. The State of New York",
-            width = "100%"
-          )
+          p(style = "font-size: 12px; color: #a0aec0; margin-bottom: 8px;",
+            "e.g. 'The State of New York', 'Greater London', 'South West England'"),
+          textInput("ob_region", NULL,
+                    placeholder = "e.g. The State of New York",
+                    width = "100%")
         )
       ),
       
@@ -285,44 +400,27 @@ onboarding_step2_ui <- function() {
                      margin-bottom: 8px; display: block;",
             "Your location"
           ),
-          p(
-            style = "font-size: 12px; color: #a0aec0; margin-bottom: 8px;",
-            "We'll use this to find what's relevant near you."
-          ),
           fluidRow(
-            column(
-              width = 6,
-              selectInput(
-                "ob_nearme_country", "Country",
-                choices = c("Select a country..." = "", get_country_list()),
-                width = "100%"
-              )
-            ),
-            column(
-              width = 6,
-              textInput(
-                "ob_nearme_postcode", "Zip / Postcode",
-                placeholder = "e.g. 10001 or SW1A 1AA",
-                width = "100%"
-              )
-            )
+            column(6, selectInput("ob_nearme_country", "Country",
+                                  choices = c("Select..." = "", get_country_list()),
+                                  width = "100%")),
+            column(6, textInput("ob_nearme_postcode", "Zip / Postcode",
+                                placeholder = "e.g. 10001 or SW1A 1AA",
+                                width = "100%"))
           )
         )
       ),
       
       div(
         style = "display: flex; gap: 10px; margin-top: 8px;",
-        actionButton(
-          "ob_step2_back", "Back",
-          style = "flex: 1; height: 44px; background: transparent; color: #9E9E9E;
-                   border: 2px solid #e2e8f0; border-radius: 8px; font-weight: 600;"
-        ),
-        actionButton(
-          "ob_step2_next", "Continue",
-          style = "flex: 2; height: 44px; background: #1A1A1A; color: #D4A843;
-                   border: 2px solid #D4A843; border-radius: 8px; font-weight: 600;
-                   font-size: 15px;"
-        )
+        actionButton("ob_step2_back", "Back",
+                     style = "flex: 1; height: 44px; background: transparent;
+                              color: #9E9E9E; border: 2px solid #e2e8f0;
+                              border-radius: 8px; font-weight: 600;"),
+        actionButton("ob_step2_next", "Continue",
+                     style = "flex: 2; height: 44px; background: #1A1A1A;
+                              color: #D4A843; border: 2px solid #D4A843;
+                              border-radius: 8px; font-weight: 600; font-size: 15px;")
       )
     )
   )
@@ -332,40 +430,31 @@ output$reach_cards_ui <- renderUI({
   current_reach <- selected_reach()
   
   reach_options <- list(
-    list(val = "global",   icon_name = "globe",               label = "Global",
-         desc = "Operates worldwide"),
-    list(val = "national", icon_name = "flag",                label = "National",
-         desc = "Single country"),
-    list(val = "regional", icon_name = "map-marker-alt",      label = "Regional",
-         desc = "Specific region or city"),
-    list(val = "near_me",  icon_name = "location-crosshairs", label = "Near Me",
-         desc = "Local / postcode-based")
+    list(val = "global",   icon_name = "globe",
+         label = "Global",   desc = "Operates worldwide"),
+    list(val = "national", icon_name = "flag",
+         label = "National", desc = "Single country"),
+    list(val = "regional", icon_name = "map-marker-alt",
+         label = "Regional", desc = "Specific region or city"),
+    list(val = "near_me",  icon_name = "location-crosshairs",
+         label = "Near Me",  desc = "Local / postcode-based")
   )
   
   div(
     style = "display: flex; gap: 12px; margin-bottom: 20px;",
     lapply(reach_options, function(opt) {
       is_selected <- !is.null(current_reach) && current_reach == opt$val
-      
       div(
         style = "flex: 1;",
-        tags$input(
-          type  = "radio", name = "ob_reach_radio",
-          id    = paste0("reach_", opt$val), value = opt$val,
-          style = "display: none;",
-          checked = if (is_selected) "checked" else NULL
-        ),
         div(
           style = paste0(
             "display: block; border-radius: 12px; padding: 16px 12px; ",
             "text-align: center; cursor: pointer; transition: all 0.2s ease; ",
             if (is_selected) {
-              paste0(
-                "border: 2px solid #667eea; ",
-                "background: linear-gradient(135deg, rgba(102,126,234,0.08) 0%, ",
-                "rgba(118,75,162,0.08) 100%); ",
-                "box-shadow: 0 0 0 3px rgba(102,126,234,0.15);"
-              )
+              paste0("border: 2px solid #667eea; ",
+                     "background: linear-gradient(135deg, ",
+                     "rgba(102,126,234,0.08), rgba(118,75,162,0.08)); ",
+                     "box-shadow: 0 0 0 3px rgba(102,126,234,0.15);")
             } else {
               "border: 2px solid #e2e8f0; background: white;"
             }
@@ -374,27 +463,16 @@ output$reach_cards_ui <- renderUI({
             "Shiny.setInputValue('ob_brand_reach', '%s', {priority: 'event'})",
             opt$val
           ),
-          div(
-            style = paste0(
-              "font-size: 24px; margin-bottom: 10px; ",
-              if (is_selected) "color: #667eea;" else "color: #a0aec0;"
-            ),
-            icon(opt$icon_name)
-          ),
-          div(
-            style = paste0(
-              "font-weight: 700; font-size: 14px; margin-bottom: 4px; ",
-              if (is_selected) "color: #667eea;" else "color: #2d3748;"
-            ),
-            opt$label
-          ),
-          div(
-            style = paste0(
-              "font-size: 12px; ",
-              if (is_selected) "color: #667eea; opacity: 0.8;" else "color: #a0aec0;"
-            ),
-            opt$desc
-          ),
+          div(style = paste0("font-size: 24px; margin-bottom: 10px; ",
+                             if (is_selected) "color: #667eea;" else "color: #a0aec0;"),
+              icon(opt$icon_name)),
+          div(style = paste0("font-weight: 700; font-size: 14px; margin-bottom: 4px; ",
+                             if (is_selected) "color: #667eea;" else "color: #2d3748;"),
+              opt$label),
+          div(style = paste0("font-size: 12px; ",
+                             if (is_selected) "color: #667eea; opacity: 0.8;"
+                             else "color: #a0aec0;"),
+              opt$desc),
           if (is_selected) {
             div(
               style = "margin-top: 8px;",
@@ -413,9 +491,7 @@ output$reach_cards_ui <- renderUI({
 })
 
 observeEvent(input$ob_brand_reach, { selected_reach(input$ob_brand_reach) })
-
 output$step2_alert <- renderUI({ NULL })
-
 observeEvent(input$ob_step2_back, { selected_reach(NULL); onboarding_step(1) })
 
 observeEvent(input$ob_step2_next, {
@@ -442,7 +518,7 @@ observeEvent(input$ob_step2_next, {
   }
   
   if (reach == "regional") {
-    region <- trimws(input$ob_region)
+    region <- trimws(input$ob_region %||% "")
     if (nchar(region) < 3) {
       output$step2_alert <- renderUI({
         div(class = "alert alert-danger",
@@ -457,7 +533,7 @@ observeEvent(input$ob_step2_next, {
   
   if (reach == "near_me") {
     nm_country  <- input$ob_nearme_country
-    nm_postcode <- trimws(input$ob_nearme_postcode)
+    nm_postcode <- trimws(input$ob_nearme_postcode %||% "")
     if (is.null(nm_country) || nm_country == "") {
       output$step2_alert <- renderUI({
         div(class = "alert alert-danger", "Please select your country.")
@@ -516,46 +592,39 @@ onboarding_step3_ui <- function() {
           icon("lightbulb", style = "color: #667eea; font-size: 14px;"),
           tags$span(
             style = "font-weight: 600; font-size: 13px; color: #2d3748;",
-            "Choose the industry that best describes you ", tags$em("and"), " your direct competitors"
+            "Choose the industry that best describes you ",
+            tags$em("and"), " your direct competitors"
           )
         ),
-        p(
-          style = "font-size: 12px; color: #718096; margin-bottom: 10px; line-height: 1.5;",
-          "Be as specific as possible, a niche description gives much more meaningful scores
-           than a broad category. Examples:"
-        ),
+        p(style = "font-size: 12px; color: #718096; margin-bottom: 10px;
+                   line-height: 1.5;",
+          "Be as specific as possible — a niche description gives much more
+           meaningful scores than a broad category. Examples:"),
         div(
           style = "display: flex; flex-direction: column; gap: 5px;",
           lapply(list(
-            list(brand = "Stripe",      broad = "Financial Services", 
+            list(brand = "Stripe",     broad = "Financial Services",
                  niche = "Online Payment Infrastructure"),
-            list(brand = "Databricks",  broad = "Software",           
+            list(brand = "Databricks", broad = "Software",
                  niche = "Lakehouse Data Platform"),
-            list(brand = "Peloton",     broad = "Fitness",            
+            list(brand = "Peloton",    broad = "Fitness",
                  niche = "Connected Fitness Hardware"),
-            list(brand = "Rivian",      broad = "Automotive",         
+            list(brand = "Rivian",     broad = "Automotive",
                  niche = "Electric Adventure Vehicles"),
-            list(brand = "Oatly",       broad = "Food & Beverage",    
+            list(brand = "Oatly",      broad = "Food & Beverage",
                  niche = "Oat-based Dairy Alternatives")
           ), function(ex) {
             div(
               style = "display: flex; align-items: baseline; gap: 6px;
                        font-size: 12px; line-height: 1.6;",
-              tags$span(
-                style = "flex: 0 0 80px; font-weight: 600; color: #4a5568;",
-                ex$brand
-              ),
-              tags$span(
-                style = "color: #E74C3C; text-decoration: line-through; 
-                         flex: 0 0 130px;",
-                ex$broad
-              ),
-              icon("arrow-right", 
+              tags$span(style = "flex: 0 0 80px; font-weight: 600; color: #4a5568;",
+                        ex$brand),
+              tags$span(style = "color: #E74C3C; text-decoration: line-through;
+                                 flex: 0 0 130px;",
+                        ex$broad),
+              icon("arrow-right",
                    style = "font-size: 10px; color: #a0aec0; flex-shrink: 0;"),
-              tags$span(
-                style = "color: #27AE60; font-weight: 600;",
-                ex$niche
-              )
+              tags$span(style = "color: #27AE60; font-weight: 600;", ex$niche)
             )
           })
         )
@@ -565,17 +634,14 @@ onboarding_step3_ui <- function() {
       
       div(
         style = "display: flex; gap: 10px; margin-top: 8px;",
-        actionButton(
-          "ob_step3_back", "Back",
-          style = "flex: 1; height: 44px; background: transparent; color: #9E9E9E;
-                   border: 2px solid #e2e8f0; border-radius: 8px; font-weight: 600;"
-        ),
-        actionButton(
-          "ob_step3_next", "Continue",
-          style = "flex: 2; height: 44px; background: #1A1A1A; color: #D4A843;
-                   border: 2px solid #D4A843; border-radius: 8px; font-weight: 600;
-                   font-size: 15px;"
-        )
+        actionButton("ob_step3_back", "Back",
+                     style = "flex: 1; height: 44px; background: transparent;
+                              color: #9E9E9E; border: 2px solid #e2e8f0;
+                              border-radius: 8px; font-weight: 600;"),
+        actionButton("ob_step3_next", "Continue",
+                     style = "flex: 2; height: 44px; background: #1A1A1A;
+                              color: #D4A843; border: 2px solid #D4A843;
+                              border-radius: 8px; font-weight: 600; font-size: 15px;")
       )
     )
   )
@@ -597,46 +663,33 @@ observeEvent(industry_lookup_trigger(), {
   
   future_promise({
     reach_str <- if (nzchar(reach_context)) paste0(" (", reach_context, ")") else ""
-    
     prompt_text <- paste0(
       'What industry is the brand "', brand, '"', reach_str, ' in? ',
       'Reply with ONLY the industry name, nothing else. ',
-      'Example replies: "Athletic Footwear", "Fast Food", "Investment Banking", ',
-      '"Cloud Computing". Do not include the word "industry" in your reply.'
+      'Example replies: "Athletic Footwear", "Fast Food", "Investment Banking". ',
+      'Do not include the word "industry" in your reply.'
     )
-    
-    results <- future.apply::future_lapply(
-      seq_len(10),
-      function(i) {
-        tryCatch({
-          resp <- request("https://api.openai.com/v1/chat/completions") |>
-            req_headers(
-              Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
-              `Content-Type` = "application/json"
-            ) |>
-            req_body_json(list(
-              model       = "gpt-4.1-mini",
-              messages    = list(list(role = "user", content = prompt_text)),
-              temperature = 0.2,
-              max_tokens  = 15
-            )) |>
-            req_perform()
-          
-          parsed <- resp_body_json(resp)
-          raw    <- trimws(parsed$choices[[1]]$message$content)
-          raw    <- gsub('^["\']|["\']$', '', raw)
-          raw    <- gsub('[.!?,;]+$', '', raw)
-          raw    <- gsub('\\s*industry\\s*$', '', raw, ignore.case = TRUE)
-          trimws(raw)
-        }, error = function(e) NA_character_)
-      },
-      future.seed = TRUE
-    )
+    results <- future.apply::future_lapply(seq_len(10), function(i) {
+      tryCatch({
+        resp <- request("https://api.openai.com/v1/chat/completions") |>
+          req_headers(Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+                      `Content-Type` = "application/json") |>
+          req_body_json(list(model = "gpt-4.1-mini",
+                             messages = list(list(role = "user",
+                                                  content = prompt_text)),
+                             temperature = 0.2, max_tokens = 15)) |>
+          req_perform()
+        raw <- trimws(resp_body_json(resp)$choices[[1]]$message$content)
+        raw <- gsub('^["\']|["\']$', '', raw)
+        raw <- gsub('[.!?,;]+$', '', raw)
+        raw <- gsub('\\s*industry\\s*$', '', raw, ignore.case = TRUE)
+        trimws(raw)
+      }, error = function(e) NA_character_)
+    }, future.seed = TRUE)
     
     industry_vec <- unlist(results)
     industry_vec <- industry_vec[!is.na(industry_vec) & nchar(industry_vec) > 0]
     if (length(industry_vec) == 0) return("")
-    
     tab          <- sort(table(tolower(industry_vec)), decreasing = TRUE)
     winner_lower <- names(tab)[1]
     industry_vec[tolower(industry_vec) == winner_lower][1]
@@ -660,8 +713,6 @@ output$industry_field_ui <- renderUI({
         "Looking up your industry...")
     ))
   }
-  
-  # Never check presence scores during onboarding — user has none yet
   tagList(
     div(
       tags$label(
@@ -670,12 +721,10 @@ output$industry_field_ui <- renderUI({
                  margin-bottom: 8px; display: block;",
         "Industry"
       ),
-      textInput(
-        "ob_industry", NULL,
-        value       = onboarding_data$industry %||% "",
-        placeholder = "e.g. Connected Fitness Hardware",
-        width       = "100%"
-      ),
+      textInput("ob_industry", NULL,
+                value       = onboarding_data$industry %||% "",
+                placeholder = "e.g. Connected Fitness Hardware",
+                width       = "100%"),
       p(style = "font-size: 12px; color: #a0aec0; margin-top: 4px;",
         "Edit this if it doesn't look right.")
     )
@@ -685,17 +734,13 @@ output$industry_field_ui <- renderUI({
 observeEvent(input$ob_step3_back, { onboarding_step(2) })
 
 observeEvent(input$ob_step3_next, {
-  
-  # Guard against industry field not yet rendered
   industry <- trimws(input$ob_industry %||% "")
-  
   if (nchar(industry) < 2) {
     output$step3_alert <- renderUI({
       div(class = "alert alert-danger", "Please enter your industry.")
     })
     return()
   }
-  
   onboarding_data$industry <- industry
   competitor_lookup_trigger(competitor_lookup_trigger() + 1)
   onboarding_step(4)
@@ -711,19 +756,26 @@ suggested_competitors     <- reactiveVal(character(0))
 selected_competitors      <- reactiveVal(character(0))
 
 onboarding_step4_ui <- function() {
+  
+  # Get slot limit from subscription
+  sub       <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_comps <- if (!is.null(sub)) {
+    sub$num_competitors_included + (sub$extra_competitors_added %||% 0)
+  } else 5
+  
   div(
     class = "login-container",
     style = "max-width: 620px;",
     div(
       class = "login-header",
       h2("Who are your competitors?"),
-      p("We've suggested the top competitors, remove any that aren't relevant, or add your own.")
+      p(paste0("We've suggested the top competitors — select up to ",
+               max_comps, " to track."))
     ),
     div(
       class = "login-body",
       uiOutput("step4_alert"),
       uiOutput("competitor_selection_ui"),
-      
       div(
         style = "margin-top: 16px;",
         tags$label(
@@ -733,33 +785,24 @@ onboarding_step4_ui <- function() {
         ),
         div(
           style = "display: flex; gap: 8px;",
-          textInput(
-            "ob_custom_competitor", NULL,
-            placeholder = "Brand name...",
-            width = "100%"
-          ),
-          actionButton(
-            "ob_add_custom_competitor",
-            icon("plus"),
-            style = "background: #667eea; color: white; border: none;
-                     border-radius: 8px; padding: 8px 14px; font-size: 14px;"
-          )
+          textInput("ob_custom_competitor", NULL,
+                    placeholder = "Brand name...", width = "100%"),
+          actionButton("ob_add_custom_competitor", icon("plus"),
+                       style = "background: #667eea; color: white; border: none;
+                                border-radius: 8px; padding: 8px 14px; font-size: 14px;")
         )
       ),
       uiOutput("setup_time_estimate_ui"),
       div(
         style = "display: flex; gap: 10px; margin-top: 20px;",
-        actionButton(
-          "ob_step4_back", "Back",
-          style = "flex: 1; height: 44px; background: transparent; color: #9E9E9E;
-                   border: 2px solid #e2e8f0; border-radius: 8px; font-weight: 600;"
-        ),
-        actionButton(
-          "ob_step4_next", "Continue",
-          style = "flex: 2; height: 44px; background: #1A1A1A; color: #D4A843;
-                   border: 2px solid #D4A843; border-radius: 8px; font-weight: 600;
-                   font-size: 15px;"
-        )
+        actionButton("ob_step4_back", "Back",
+                     style = "flex: 1; height: 44px; background: transparent;
+                              color: #9E9E9E; border: 2px solid #e2e8f0;
+                              border-radius: 8px; font-weight: 600;"),
+        actionButton("ob_step4_next", "Continue",
+                     style = "flex: 2; height: 44px; background: #1A1A1A;
+                              color: #D4A843; border: 2px solid #D4A843;
+                              border-radius: 8px; font-weight: 600; font-size: 15px;")
       )
     )
   )
@@ -783,40 +826,32 @@ observeEvent(competitor_lookup_trigger(), {
   
   future_promise({
     reach_str <- if (nzchar(reach_context)) paste0(" in ", reach_context) else ""
-    
     prompt <- paste0(
-      "List the top 8 competitors for the brand '", brand, "' in the ", industry,
-      " industry", reach_str, ". ",
-      "Return ONLY brand names separated by semi-colons. No numbers, no descriptions, ",
-      "no extra text. Example format: Brand A; Brand B; Brand C"
+      "List the top 8 competitors for the brand '", brand,
+      "' in the ", industry, " industry", reach_str, ". ",
+      "Return ONLY brand names separated by semi-colons. No numbers, no descriptions. ",
+      "Example: Brand A; Brand B; Brand C"
     )
-    
     resp <- request("https://api.openai.com/v1/chat/completions") |>
-      req_headers(
-        Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
-        `Content-Type` = "application/json"
-      ) |>
-      req_body_json(list(
-        model       = "gpt-4.1-mini",
-        messages    = list(list(role = "user", content = prompt)),
-        temperature = 0.2,
-        max_tokens  = 100
-      )) |>
+      req_headers(Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+                  `Content-Type` = "application/json") |>
+      req_body_json(list(model = "gpt-4.1-mini",
+                         messages = list(list(role = "user", content = prompt)),
+                         temperature = 0.2, max_tokens = 100)) |>
       req_perform()
     
-    parsed  <- resp_body_json(resp)
-    raw_txt <- parsed$choices[[1]]$message$content
-    
-    raw_txt |>
-      strsplit(";") |>
-      unlist() |>
-      trimws() |>
-      (\(x) x[nchar(x) > 0])() |>
-      head(8)
+    resp_body_json(resp)$choices[[1]]$message$content |>
+      strsplit(";") |> unlist() |> trimws() |>
+      (\(x) x[nchar(x) > 0])() |> head(8)
     
   }) %...>% (function(comps) {
     suggested_competitors(comps)
-    selected_competitors(head(comps, 5))
+    # Pre-select up to the subscription limit
+    sub       <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+    max_comps <- if (!is.null(sub)) {
+      sub$num_competitors_included + (sub$extra_competitors_added %||% 0)
+    } else 5
+    selected_competitors(head(comps, min(max_comps, 5)))
     competitor_loading(FALSE)
   }) %...!% (function(err) {
     suggested_competitors(character(0))
@@ -838,15 +873,18 @@ output$competitor_selection_ui <- renderUI({
     ))
   }
   
+  sub       <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_comps <- if (!is.null(sub)) {
+    sub$num_competitors_included + (sub$extra_competitors_added %||% 0)
+  } else 5
+  
   all_comps <- c(suggested_competitors(),
                  setdiff(selected_competitors(), suggested_competitors()))
   selected  <- selected_competitors()
   
   if (length(all_comps) == 0) {
-    return(div(
-      style = "text-align: center; padding: 20px; color: #a0aec0;",
-      p("No suggestions found. Add competitors manually below.")
-    ))
+    return(div(style = "text-align: center; padding: 20px; color: #a0aec0;",
+               p("No suggestions found. Add competitors manually below.")))
   }
   
   div(
@@ -857,27 +895,30 @@ output$competitor_selection_ui <- renderUI({
       "Select competitors to track"
     ),
     p(style = "font-size: 12px; color: #a0aec0; margin-bottom: 12px;",
-      paste0(length(selected), " selected, click to toggle")),
-    
+      paste0(length(selected), " of ", max_comps, " slots selected — click to toggle")),
     div(
       style = "display: flex; flex-wrap: wrap; gap: 8px;",
       lapply(all_comps, function(comp) {
         is_selected <- comp %in% selected
+        at_limit    <- length(selected) >= max_comps && !is_selected
         div(
           style = paste0(
-            "padding: 8px 14px; border-radius: 20px; cursor: pointer; font-size: 13px; ",
-            "font-weight: 500; transition: all 0.15s ease; user-select: none; ",
+            "padding: 8px 14px; border-radius: 20px; cursor: ",
+            if (at_limit) "not-allowed" else "pointer",
+            "; font-size: 13px; font-weight: 500; ",
+            "transition: all 0.15s ease; user-select: none; ",
             "display: flex; align-items: center; gap: 6px; ",
             if (is_selected) {
               "background: #667eea; color: white; border: 2px solid #667eea;"
+            } else if (at_limit) {
+              "background: #f7f7f7; color: #cbd5e0; border: 2px solid #e2e8f0;"
             } else {
               "background: white; color: #4a5568; border: 2px solid #e2e8f0;"
             }
           ),
-          onclick = sprintf(
+          onclick = if (!at_limit) sprintf(
             "Shiny.setInputValue('ob_toggle_competitor', '%s', {priority: 'event'})",
-            comp
-          ),
+            comp) else NULL,
           if (is_selected) icon("check", style = "font-size: 11px;"),
           comp
         )
@@ -889,16 +930,37 @@ output$competitor_selection_ui <- renderUI({
 observeEvent(input$ob_toggle_competitor, {
   comp    <- input$ob_toggle_competitor
   current <- selected_competitors()
+  sub     <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_comps <- if (!is.null(sub)) {
+    sub$num_competitors_included + (sub$extra_competitors_added %||% 0)
+  } else 5
+  
   if (comp %in% current) {
     selected_competitors(setdiff(current, comp))
-  } else {
+  } else if (length(current) < max_comps) {
     selected_competitors(c(current, comp))
+  } else {
+    showNotification(
+      paste0("Your plan includes ", max_comps, " competitor slots. ",
+             "Upgrade to add more."),
+      type = "warning", duration = 4)
   }
 })
 
 observeEvent(input$ob_add_custom_competitor, {
-  custom <- trimws(input$ob_custom_competitor)
+  custom    <- trimws(input$ob_custom_competitor %||% "")
   if (nchar(custom) < 2) return()
+  sub       <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_comps <- if (!is.null(sub)) {
+    sub$num_competitors_included + (sub$extra_competitors_added %||% 0)
+  } else 5
+  
+  if (length(selected_competitors()) >= max_comps) {
+    showNotification(
+      paste0("Your plan includes ", max_comps, " competitor slots. Upgrade to add more."),
+      type = "warning", duration = 4)
+    return()
+  }
   if (!tolower(custom) %in% tolower(suggested_competitors())) {
     suggested_competitors(c(suggested_competitors(), custom))
   }
@@ -909,7 +971,6 @@ observeEvent(input$ob_add_custom_competitor, {
 })
 
 observeEvent(input$ob_step4_back, { onboarding_step(3) })
-
 observeEvent(input$ob_step4_next, {
   onboarding_data$competitors <- selected_competitors()
   prompt_lookup_trigger(prompt_lookup_trigger() + 1)
@@ -926,19 +987,25 @@ suggested_prompts     <- reactiveVal(character(0))
 selected_prompts      <- reactiveVal(character(0))
 
 onboarding_step5_ui <- function() {
+  sub        <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_prompts <- if (!is.null(sub)) {
+    sub$num_prompts_included + (sub$extra_prompts_added %||% 0)
+  } else 1
+  
   div(
     class = "login-container",
     style = "max-width: 620px;",
     div(
       class = "login-header",
       h2("What are people searching for?"),
-      p("These are prompts your brand would want to appear in, select the ones most relevant to you or choose your own.")
+      p(paste0("Select up to ", max_prompts,
+               " prompt", if (max_prompts != 1) "s" else "",
+               " your brand would want to appear in."))
     ),
     div(
       class = "login-body",
       uiOutput("step5_alert"),
       uiOutput("prompt_selection_ui"),
-      
       div(
         style = "margin-top: 16px;",
         tags$label(
@@ -948,33 +1015,25 @@ onboarding_step5_ui <- function() {
         ),
         div(
           style = "display: flex; gap: 8px;",
-          textInput(
-            "ob_custom_prompt", NULL,
-            placeholder = "e.g. What are the best running shoes?",
-            width = "100%"
-          ),
-          actionButton(
-            "ob_add_custom_prompt",
-            icon("plus"),
-            style = "background: #667eea; color: white; border: none;
-                     border-radius: 8px; padding: 8px 14px; font-size: 14px;"
-          )
+          textInput("ob_custom_prompt", NULL,
+                    placeholder = "e.g. What are the best running shoes?",
+                    width = "100%"),
+          actionButton("ob_add_custom_prompt", icon("plus"),
+                       style = "background: #667eea; color: white; border: none;
+                                border-radius: 8px; padding: 8px 14px; font-size: 14px;")
         )
       ),
       uiOutput("setup_time_estimate_ui"),
       div(
         style = "display: flex; gap: 10px; margin-top: 20px;",
-        actionButton(
-          "ob_step5_back", "Back",
-          style = "flex: 1; height: 44px; background: transparent; color: #9E9E9E;
-                   border: 2px solid #e2e8f0; border-radius: 8px; font-weight: 600;"
-        ),
-        actionButton(
-          "ob_step5_next", "Continue",
-          style = "flex: 2; height: 44px; background: #1A1A1A; color: #D4A843;
-                   border: 2px solid #D4A843; border-radius: 8px; font-weight: 600;
-                   font-size: 15px;"
-        )
+        actionButton("ob_step5_back", "Back",
+                     style = "flex: 1; height: 44px; background: transparent;
+                              color: #9E9E9E; border: 2px solid #e2e8f0;
+                              border-radius: 8px; font-weight: 600;"),
+        actionButton("ob_step5_next", "Continue",
+                     style = "flex: 2; height: 44px; background: #1A1A1A;
+                              color: #D4A843; border: 2px solid #D4A843;
+                              border-radius: 8px; font-weight: 600; font-size: 15px;")
       )
     )
   )
@@ -1000,58 +1059,43 @@ observeEvent(prompt_lookup_trigger(), {
   future_promise({
     reach_str   <- if (nzchar(reach_context)) paste0(" in ", reach_context) else ""
     near_me_str <- build_near_me_suffix(reach, country, postcode)
-    
-    location_str <- if (nzchar(near_me_str)) {
-      paste0(" near ", near_me_str)
-    } else if (nzchar(reach_str)) {
-      reach_str
-    } else {
-      ""
-    }
+    location_str <- if (nzchar(near_me_str)) paste0(" near ", near_me_str)
+    else if (nzchar(reach_str)) reach_str
+    else ""
     
     prompt <- paste0(
-      "Generate 10 search prompts that a potential customer would type into an AI assistant ",
-      "when looking for a brand, product, or service in the ", industry, " industry",
-      location_str, ". ",
-      "The prompts must:\n",
-      "- Be phrased as natural questions a buyer would ask\n",
-      "- Be specific enough that a brand name would appear in the answer\n",
-      "- Cover different buying intents (best, recommended, cheapest, near me, reviews, etc.)\n",
-      "- NOT mention any specific brand names\n",
-      "- Include the location context where relevant\n\n",
-      "Return ONLY the 10 prompts separated by semi-colons. ",
-      "No numbers, no explanations, no brand names."
+      "Generate 10 search prompts a potential customer would type into an AI assistant ",
+      "when looking for a brand in the ", industry, " industry", location_str, ". ",
+      "Rules:\n",
+      "- Natural questions a buyer would ask\n",
+      "- Specific enough that a brand name would appear in the answer\n",
+      "- Cover different buying intents\n",
+      "- Do NOT mention specific brand names\n",
+      "- Include location context where relevant\n\n",
+      "Return ONLY the 10 prompts separated by semi-colons. No numbers, no explanations."
     )
-    
     resp <- request("https://api.openai.com/v1/chat/completions") |>
-      req_headers(
-        Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
-        `Content-Type` = "application/json"
-      ) |>
-      req_body_json(list(
-        model       = "gpt-4o-mini",
-        messages    = list(list(role = "user", content = prompt)),
-        temperature = 0.5,
-        max_tokens  = 400
-      )) |>
+      req_headers(Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+                  `Content-Type` = "application/json") |>
+      req_body_json(list(model = "gpt-4o-mini",
+                         messages = list(list(role = "user", content = prompt)),
+                         temperature = 0.5, max_tokens = 400)) |>
       req_perform()
     
-    parsed  <- resp_body_json(resp)
-    raw_txt <- sanitise_text(parsed$choices[[1]]$message$content)
-    
-    raw_txt |>
-      strsplit(";") |>
-      unlist() |>
-      trimws() |>
-      (\(x) gsub("^[0-9]+[.)\\s]+", "", x))() |>
-      trimws() |>
+    sanitise_text(resp_body_json(resp)$choices[[1]]$message$content) |>
+      strsplit(";") |> unlist() |> trimws() |>
+      (\(x) gsub("^[0-9]+[.)\\s]+", "", x))() |> trimws() |>
       (\(x) x[grepl("\\?$", x)])() |>
       (\(x) x[nchar(x) > 10])() |>
       head(10)
     
   }) %...>% (function(prompts) {
     suggested_prompts(prompts)
-    selected_prompts(head(prompts, 5))
+    sub         <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+    max_prompts <- if (!is.null(sub)) {
+      sub$num_prompts_included + (sub$extra_prompts_added %||% 0)
+    } else 1
+    selected_prompts(head(prompts, min(max_prompts, 3)))
     prompt_loading(FALSE)
   }) %...!% (function(err) {
     suggested_prompts(character(0))
@@ -1073,15 +1117,18 @@ output$prompt_selection_ui <- renderUI({
     ))
   }
   
+  sub         <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_prompts <- if (!is.null(sub)) {
+    sub$num_prompts_included + (sub$extra_prompts_added %||% 0)
+  } else 1
+  
   all_prompts <- c(suggested_prompts(),
                    setdiff(selected_prompts(), suggested_prompts()))
   selected    <- selected_prompts()
   
   if (length(all_prompts) == 0) {
-    return(div(
-      style = "text-align: center; padding: 20px; color: #a0aec0;",
-      p("No suggestions found. Add prompts manually below.")
-    ))
+    return(div(style = "text-align: center; padding: 20px; color: #a0aec0;",
+               p("No suggestions found. Add prompts manually below.")))
   }
   
   div(
@@ -1092,40 +1139,37 @@ output$prompt_selection_ui <- renderUI({
       "Select prompts to track"
     ),
     p(style = "font-size: 12px; color: #a0aec0; margin-bottom: 12px;",
-      paste0(length(selected), " of ", length(all_prompts),
-             " selected, click to toggle")),
-    
+      paste0(length(selected), " of ", max_prompts, " slots selected — click to toggle")),
     div(
       style = "display: flex; flex-direction: column; gap: 8px;",
       lapply(all_prompts, function(prompt_text) {
         is_selected <- prompt_text %in% selected
-        
+        at_limit    <- length(selected) >= max_prompts && !is_selected
         div(
           style = paste0(
-            "padding: 10px 16px; border-radius: 10px; cursor: pointer; ",
+            "padding: 10px 16px; border-radius: 10px; cursor: ",
+            if (at_limit) "not-allowed" else "pointer", "; ",
             "font-size: 13px; transition: all 0.15s ease; user-select: none; ",
             "display: flex; align-items: center; gap: 10px; ",
             if (is_selected) {
               "background: linear-gradient(135deg, rgba(102,126,234,0.1),
                rgba(118,75,162,0.1)); border: 2px solid #667eea; color: #4a5568;"
+            } else if (at_limit) {
+              "background: #f9f9f9; border: 2px solid #f0f0f0; color: #cbd5e0;"
             } else {
               "background: white; border: 2px solid #e2e8f0; color: #718096;"
             }
           ),
-          onclick = sprintf(
+          onclick = if (!at_limit) sprintf(
             "Shiny.setInputValue('ob_toggle_prompt', %s, {priority: 'event'})",
-            jsonlite::toJSON(prompt_text, auto_unbox = TRUE)
-          ),
+            jsonlite::toJSON(prompt_text, auto_unbox = TRUE)) else NULL,
           div(
             style = paste0(
               "flex: 0 0 20px; width: 20px; height: 20px; border-radius: 5px; ",
               "display: flex; align-items: center; justify-content: center; ",
-              "font-size: 11px; transition: all 0.15s; ",
-              if (is_selected) {
-                "background: #667eea; color: white; border: 2px solid #667eea;"
-              } else {
-                "background: white; border: 2px solid #cbd5e0;"
-              }
+              "font-size: 11px; ",
+              if (is_selected) "background: #667eea; color: white; border: 2px solid #667eea;"
+              else "background: white; border: 2px solid #cbd5e0;"
             ),
             if (is_selected) icon("check")
           ),
@@ -1139,16 +1183,38 @@ output$prompt_selection_ui <- renderUI({
 observeEvent(input$ob_toggle_prompt, {
   prompt_text <- input$ob_toggle_prompt
   current     <- selected_prompts()
+  sub         <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_prompts <- if (!is.null(sub)) {
+    sub$num_prompts_included + (sub$extra_prompts_added %||% 0)
+  } else 1
+  
   if (prompt_text %in% current) {
     selected_prompts(setdiff(current, prompt_text))
-  } else {
+  } else if (length(current) < max_prompts) {
     selected_prompts(c(current, prompt_text))
+  } else {
+    showNotification(
+      paste0("Your plan includes ", max_prompts, " prompt slot",
+             if (max_prompts != 1) "s" else "", ". Upgrade to add more."),
+      type = "warning", duration = 4)
   }
 })
 
 observeEvent(input$ob_add_custom_prompt, {
-  custom <- trimws(input$ob_custom_prompt)
+  custom      <- trimws(input$ob_custom_prompt %||% "")
   if (nchar(custom) < 5) return()
+  sub         <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_prompts <- if (!is.null(sub)) {
+    sub$num_prompts_included + (sub$extra_prompts_added %||% 0)
+  } else 1
+  
+  if (length(selected_prompts()) >= max_prompts) {
+    showNotification(
+      paste0("Your plan includes ", max_prompts, " prompt slot",
+             if (max_prompts != 1) "s" else "", ". Upgrade to add more."),
+      type = "warning", duration = 4)
+    return()
+  }
   if (!tolower(custom) %in% tolower(suggested_prompts())) {
     suggested_prompts(c(suggested_prompts(), custom))
   }
@@ -1159,7 +1225,6 @@ observeEvent(input$ob_add_custom_prompt, {
 })
 
 observeEvent(input$ob_step5_back, { onboarding_step(4) })
-
 observeEvent(input$ob_step5_next, {
   onboarding_data$prompts <- selected_prompts()
   onboarding_step(6)
@@ -1169,169 +1234,174 @@ observeEvent(input$ob_step5_next, {
 # Step 6: Personas
 # ============================================
 
-# Standard persona names — first 4 shown as quick-select cards
 ONBOARDING_PERSONA_SUGGESTIONS <- list(
-  list(
-    name = "Young Professional",
-    desc = "I am an urban professional aged 22-32 with a college degree earning between $45,000 and $80,000 per year. I am career focused and either single or newly in a relationship.",
-    icon = "briefcase"
-  ),
-  list(
-    name = "Family Focused",
-    desc = "I am a married parent aged 30-45 with two or more children. My household income is between $60,000 and $100,000 per year and I live in the suburbs and prioritise value for money.",
-    icon = "house-chimney"
-  ),
-  list(
-    name = "Budget Conscious",
-    desc = "I am a price-sensitive shopper with a household income under $40,000 per year. I always look for the best deal and prioritise affordability over brand prestige.",
-    icon = "piggy-bank"
-  ),
-  list(
-    name = "Luxury Seeker",
-    desc = "I am a high earner aged 30-55 with a household income over $150,000 per year. I am brand conscious and always prioritise quality and prestige over price.",
-    icon = "gem"
-  )
+  list(name = "Young Professional",
+       desc = "I am an urban professional aged 22-32 with a college degree earning between $45,000 and $80,000 per year. I am career focused and either single or newly in a relationship.",
+       icon = "briefcase"),
+  list(name = "Family Focused",
+       desc = "I am a married parent aged 30-45 with two or more children. My household income is between $60,000 and $100,000 per year and I live in the suburbs and prioritise value for money.",
+       icon = "house-chimney"),
+  list(name = "Budget Conscious",
+       desc = "I am a price-sensitive shopper with a household income under $40,000 per year. I always look for the best deal and prioritise affordability over brand prestige.",
+       icon = "piggy-bank"),
+  list(name = "Luxury Seeker",
+       desc = "I am a high earner aged 30-55 with a household income over $150,000 per year. I am brand conscious and always prioritise quality and prestige over price.",
+       icon = "gem")
 )
 
-ob_selected_personas  <- reactiveVal(list())   # list of list(name, desc)
+ob_selected_personas  <- reactiveVal(list())
 ob_custom_persona_err <- reactiveVal(NULL)
 
 onboarding_step6_ui <- function() {
+  sub        <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_personas <- if (!is.null(sub)) {
+    (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  } else 0
+  
   div(
     class = "login-container",
     style = "max-width: 680px;",
     div(
       class = "login-header",
-      h2("Add marketing personas"),
-      p("Score your brand through the eyes of specific customer segments.
-         Select from our standard personas, add your own, or skip for now.")
+      h2("Add customer personas"),
+      p(if (max_personas > 0) {
+        paste0("Score your brand through the eyes of specific customer segments. ",
+               "Your plan includes ", max_personas, " persona slot",
+               if (max_personas != 1) "s" else "", ".")
+      } else {
+        "Upgrade your plan to unlock persona scoring — or skip for now."
+      })
     ),
     div(
       class = "login-body",
       
-      # ── Standard persona cards ──────────────────────────────────────────
-      tags$label(
-        style = "font-weight: 600; font-size: 12px; color: #718096;
-                 text-transform: uppercase; letter-spacing: 0.5px;
-                 margin-bottom: 10px; display: block;",
-        "Standard personas, click to add"
-      ),
-      uiOutput("ob_persona_cards_ui"),
+      if (max_personas == 0) {
+        # No persona slots — show upgrade prompt
+        div(
+          style = "text-align: center; padding: 20px; margin-bottom: 16px;
+                   background: rgba(142,68,173,0.04);
+                   border: 1px dashed rgba(142,68,173,0.3);
+                   border-radius: 12px;",
+          icon("users", class = "fa-2x",
+               style = "color: #8E44AD; margin-bottom: 12px;"),
+          div(style = "font-size: 14px; font-weight: 600; color: #2d3748;
+                       margin-bottom: 6px;",
+              "Persona scoring not included in your current plan"),
+          div(style = "font-size: 13px; color: #718096; margin-bottom: 16px;",
+              "Starter includes 1 persona, Pro includes 3."),
+          actionButton("ob_upgrade_for_personas", "View Plans",
+                       icon = icon("arrow-up"),
+                       style = "background: #8E44AD; color: white; border: none;
+                                border-radius: 8px; padding: 8px 20px; font-weight: 600;")
+        )
+      } else {
+        tagList(
+          # Standard persona cards
+          tags$label(
+            style = "font-weight: 600; font-size: 12px; color: #718096;
+                     text-transform: uppercase; letter-spacing: 0.5px;
+                     margin-bottom: 10px; display: block;",
+            "Standard personas — click to add"
+          ),
+          uiOutput("ob_persona_cards_ui"),
+          hr(style = "border-color: #f0f0f0; margin: 20px 0;"),
+          uiOutput("ob_selected_personas_ui"),
+          hr(style = "border-color: #f0f0f0; margin: 20px 0;"),
+          
+          # Custom persona
+          tags$label(
+            style = "font-weight: 600; font-size: 12px; color: #718096;
+                     text-transform: uppercase; letter-spacing: 0.5px;
+                     margin-bottom: 10px; display: block;",
+            "Create a custom persona"
+          ),
+          uiOutput("ob_custom_persona_err_ui"),
+          textInput("ob_custom_persona_name", NULL,
+                    placeholder = "Persona name e.g. 'Eco Conscious Millennial'",
+                    width = "100%"),
+          tags$textarea(id = "ob_custom_persona_desc",
+                        class = "form-control", rows = 3,
+                        placeholder = "Describe in first person, e.g. 'I am a...'",
+                        style = "font-size: 13px; resize: vertical; margin-bottom: 8px;"),
+          actionButton("ob_add_custom_persona_btn", "Add Persona",
+                       icon = icon("plus"),
+                       style = "background: #8E44AD; color: white; border: none;
+                                border-radius: 8px; padding: 8px 18px; font-weight: 600;
+                                font-size: 13px; margin-bottom: 8px;"),
+          hr(style = "border-color: #f0f0f0; margin: 20px 0;")
+        )
+      },
       
-      hr(style = "border-color: #f0f0f0; margin: 20px 0;"),
-      
-      # ── Selected personas list ──────────────────────────────────────────
-      uiOutput("ob_selected_personas_ui"),
-      
-      hr(style = "border-color: #f0f0f0; margin: 20px 0;"),
-      
-      # ── Custom persona creator ──────────────────────────────────────────
-      tags$label(
-        style = "font-weight: 600; font-size: 12px; color: #718096;
-                 text-transform: uppercase; letter-spacing: 0.5px;
-                 margin-bottom: 10px; display: block;",
-        "Create a custom persona"
-      ),
-      uiOutput("ob_custom_persona_err_ui"),
-      textInput(
-        "ob_custom_persona_name", NULL,
-        placeholder = "Persona name e.g. 'Eco Conscious Millennial'",
-        width = "100%"
-      ),
-      tags$textarea(
-        id          = "ob_custom_persona_desc",
-        class       = "form-control",
-        rows        = 3,
-        placeholder = "Describe in first person, e.g. 'I am a...'",
-        style       = "font-size: 13px; resize: vertical; margin-bottom: 8px;"
-      ),
-      actionButton(
-        "ob_add_custom_persona_btn",
-        "Add Persona",
-        icon  = icon("plus"),
-        style = "background: #8E44AD; color: white; border: none;
-                 border-radius: 8px; padding: 8px 18px; font-weight: 600;
-                 font-size: 13px; margin-bottom: 8px;"
-      ),
-      
-      hr(style = "border-color: #f0f0f0; margin: 20px 0;"),
-      
-      # ── Navigation ─────────────────────────────────────────────────────
       uiOutput("setup_time_estimate_ui"),
       div(
-        style = "display: flex; gap: 10px;",
-        actionButton(
-          "ob_step6_back", "Back",
-          style = "flex: 1; height: 44px; background: transparent; color: #9E9E9E;
-                   border: 2px solid #e2e8f0; border-radius: 8px; font-weight: 600;"
-        ),
-        actionButton(
-          "ob_step6_skip", "Skip for now",
-          style = "flex: 1; height: 44px; background: transparent; color: #718096;
-                   border: 2px solid #e2e8f0; border-radius: 8px; font-weight: 600;"
-        ),
-        actionButton(
-          "ob_step6_finish", "Complete Setup",
-          icon  = icon("check"),
-          style = "flex: 2; height: 44px; background: #1A1A1A; color: #D4A843;
-                   border: 2px solid #D4A843; border-radius: 8px; font-weight: 600;
-                   font-size: 15px;"
-        )
+        style = "display: flex; gap: 10px; margin-top: 16px;",
+        actionButton("ob_step6_back", "Back",
+                     style = "flex: 1; height: 44px; background: transparent;
+                              color: #9E9E9E; border: 2px solid #e2e8f0;
+                              border-radius: 8px; font-weight: 600;"),
+        actionButton("ob_step6_skip", "Skip for now",
+                     style = "flex: 1; height: 44px; background: transparent;
+                              color: #718096; border: 2px solid #e2e8f0;
+                              border-radius: 8px; font-weight: 600;"),
+        actionButton("ob_step6_finish", "Complete Setup",
+                     icon = icon("check"),
+                     style = "flex: 2; height: 44px; background: #1A1A1A;
+                              color: #D4A843; border: 2px solid #D4A843;
+                              border-radius: 8px; font-weight: 600; font-size: 15px;")
       )
     )
   )
 }
 
-# Standard persona suggestion cards
+observeEvent(input$ob_upgrade_for_personas, {
+  shinyjs::click("upgrade_btn")
+})
+
 output$ob_persona_cards_ui <- renderUI({
-  selected <- ob_selected_personas()
+  sub          <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_personas <- if (!is.null(sub)) {
+    (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  } else 0
+  
+  selected  <- ob_selected_personas()
   sel_names <- sapply(selected, `[[`, "name")
   
   div(
     style = "display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px;",
     lapply(ONBOARDING_PERSONA_SUGGESTIONS, function(p) {
-      is_sel <- p$name %in% sel_names
+      is_sel   <- p$name %in% sel_names
+      at_limit <- length(sel_names) >= max_personas && !is_sel
       
       div(
         style = paste0(
           "flex: 1; min-width: 130px; border-radius: 12px; padding: 14px 12px; ",
-          "text-align: center; cursor: pointer; transition: all 0.2s ease; ",
+          "text-align: center; cursor: ",
+          if (at_limit) "not-allowed" else "pointer", "; ",
+          "transition: all 0.2s ease; ",
           if (is_sel) {
             "border: 2px solid #8E44AD;
              background: linear-gradient(135deg, rgba(142,68,173,0.08),
-             rgba(142,68,173,0.04));
-             box-shadow: 0 0 0 3px rgba(142,68,173,0.12);"
+             rgba(142,68,173,0.04));"
+          } else if (at_limit) {
+            "border: 2px solid #f0f0f0; background: #fafafa; opacity: 0.5;"
           } else {
             "border: 2px solid #e2e8f0; background: white;"
           }
         ),
-        onclick = sprintf(
+        onclick = if (!at_limit) sprintf(
           "Shiny.setInputValue('ob_toggle_std_persona', '%s', {priority: 'event'})",
-          p$name
-        ),
-        div(
-          style = paste0(
-            "font-size: 22px; margin-bottom: 8px; ",
-            if (is_sel) "color: #8E44AD;" else "color: #a0aec0;"
-          ),
-          icon(p$icon)
-        ),
-        div(
-          style = paste0(
-            "font-size: 13px; font-weight: 700; margin-bottom: 2px; ",
-            if (is_sel) "color: #8E44AD;" else "color: #2d3748;"
-          ),
-          p$name
-        ),
+          p$name) else NULL,
+        div(style = paste0("font-size: 22px; margin-bottom: 8px; ",
+                           if (is_sel) "color: #8E44AD;" else "color: #a0aec0;"),
+            icon(p$icon)),
+        div(style = paste0("font-size: 13px; font-weight: 700; margin-bottom: 2px; ",
+                           if (is_sel) "color: #8E44AD;" else "color: #2d3748;"),
+            p$name),
         if (is_sel) {
-          div(
-            style = "margin-top: 6px;",
-            tags$span(
-              style = "background: #8E44AD; color: white; font-size: 10px;
-                       padding: 2px 8px; border-radius: 10px; font-weight: 600;",
-              icon("check", style = "font-size: 9px; margin-right: 3px;"),
-              "Added"
-            )
+          tags$span(
+            style = "background: #8E44AD; color: white; font-size: 10px;
+                     padding: 2px 8px; border-radius: 10px; font-weight: 600;",
+            icon("check", style = "font-size: 9px; margin-right: 3px;"), "Added"
           )
         }
       )
@@ -1339,42 +1409,44 @@ output$ob_persona_cards_ui <- renderUI({
   )
 })
 
-# Toggle a standard persona on/off
 observeEvent(input$ob_toggle_std_persona, {
-  name    <- input$ob_toggle_std_persona
-  current <- ob_selected_personas()
-  names   <- sapply(current, `[[`, "name")
+  name         <- input$ob_toggle_std_persona
+  current      <- ob_selected_personas()
+  names        <- sapply(current, `[[`, "name")
+  sub          <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_personas <- if (!is.null(sub)) {
+    (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  } else 0
   
   if (name %in% names) {
-    # Remove
     ob_selected_personas(current[!names %in% name])
-  } else {
-    # Add — look up descriptor from suggestion list
+  } else if (length(names) < max_personas) {
     match <- Filter(function(p) p$name == name, ONBOARDING_PERSONA_SUGGESTIONS)
-    if (length(match) > 0) {
-      ob_selected_personas(c(current, list(match[[1]])))
-    }
+    if (length(match) > 0) ob_selected_personas(c(current, list(match[[1]])))
+  } else {
+    showNotification(
+      paste0("Your plan includes ", max_personas, " persona slot",
+             if (max_personas != 1) "s" else "", ". Upgrade to add more."),
+      type = "warning", duration = 4)
   }
 })
 
-# Add custom persona
 output$ob_custom_persona_err_ui <- renderUI({
   err <- ob_custom_persona_err()
-  if (!is.null(err)) div(class = "alert alert-danger", style = "margin-bottom: 8px;", err)
+  if (!is.null(err)) div(class = "alert alert-danger",
+                         style = "margin-bottom: 8px;", err)
 })
 
 observeEvent(input$ob_add_custom_persona_btn, {
-  name <- trimws(input$ob_custom_persona_name)
-  desc <- trimws(input$ob_custom_persona_desc)
+  name         <- trimws(input$ob_custom_persona_name %||% "")
+  desc         <- trimws(input$ob_custom_persona_desc %||% "")
+  sub          <- tryCatch(get_user_subscription(rv$login_id), error = function(e) NULL)
+  max_personas <- if (!is.null(sub)) {
+    (sub$num_personas_included %||% 0) + (sub$extra_personas_added %||% 0)
+  } else 0
   
-  if (nchar(name) < 2) {
-    ob_custom_persona_err("Please enter a persona name.")
-    return()
-  }
-  if (nchar(desc) < 10) {
-    ob_custom_persona_err("Please enter a description (at least 10 characters).")
-    return()
-  }
+  if (nchar(name) < 2) { ob_custom_persona_err("Please enter a persona name."); return() }
+  if (nchar(desc) < 10) { ob_custom_persona_err("Please enter a description (at least 10 characters)."); return() }
   
   current   <- ob_selected_personas()
   cur_names <- sapply(current, `[[`, "name")
@@ -1383,34 +1455,38 @@ observeEvent(input$ob_add_custom_persona_btn, {
     ob_custom_persona_err("A persona with that name is already added.")
     return()
   }
+  if (length(current) >= max_personas) {
+    ob_custom_persona_err(paste0("Your plan includes ", max_personas,
+                                 " persona slot", if (max_personas != 1) "s" else "",
+                                 ". Upgrade to add more."))
+    return()
+  }
   
   ob_custom_persona_err(NULL)
-  ob_selected_personas(c(current, list(list(name = name, desc = desc, icon = "user-pen"))))
+  ob_selected_personas(c(current,
+                         list(list(name = name, desc = desc, icon = "user-pen"))))
   updateTextInput(session, "ob_custom_persona_name", value = "")
   shinyjs::runjs("document.getElementById('ob_custom_persona_desc').value = ''")
 })
 
-# Display selected personas
 output$ob_selected_personas_ui <- renderUI({
   selected <- ob_selected_personas()
-  
   if (length(selected) == 0) {
     return(div(
-      style = "text-align: center; padding: 16px; color: #a0aec0; 
+      style = "text-align: center; padding: 16px; color: #a0aec0;
                border: 1px dashed #e2e8f0; border-radius: 10px;",
       icon("users", style = "margin-bottom: 6px; color: #e2e8f0; font-size: 20px;"),
       p(style = "margin: 0; font-size: 13px;",
-        "No personas selected yet, add some above or skip this step.")
+        "No personas selected yet — add some above or skip this step.")
     ))
   }
-  
   div(
     tags$label(
       style = "font-weight: 600; font-size: 12px; color: #718096;
                text-transform: uppercase; letter-spacing: 0.5px;
                margin-bottom: 8px; display: block;",
-      paste0(length(selected), " persona", if (length(selected) != 1) "s" else "",
-             " selected")
+      paste0(length(selected), " persona",
+             if (length(selected) != 1) "s" else "", " selected")
     ),
     div(
       style = "display: flex; flex-direction: column; gap: 6px;",
@@ -1420,28 +1496,24 @@ output$ob_selected_personas_ui <- renderUI({
           style = "display: flex; align-items: center; gap: 10px; padding: 10px 12px;
                    border-radius: 10px; background: rgba(142,68,173,0.04);
                    border: 1px solid rgba(142,68,173,0.15);",
-          div(
-            style = "flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px;
-                     background: rgba(142,68,173,0.12); display: flex;
-                     align-items: center; justify-content: center; color: #8E44AD;",
-            icon(if (!is.null(p$icon)) p$icon else "users", style = "font-size: 13px;")
-          ),
+          div(style = "flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px;
+                       background: rgba(142,68,173,0.12); display: flex;
+                       align-items: center; justify-content: center; color: #8E44AD;",
+              icon(if (!is.null(p$icon)) p$icon else "users",
+                   style = "font-size: 13px;")),
           div(
             style = "flex: 1; min-width: 0;",
-            div(style = "font-size: 13px; font-weight: 600; color: #2d3748;",
-                p$name),
+            div(style = "font-size: 13px; font-weight: 600; color: #2d3748;", p$name),
             div(style = "font-size: 11px; color: #a0aec0; white-space: nowrap;
                          overflow: hidden; text-overflow: ellipsis;",
                 substr(p$desc, 1, 80), if (nchar(p$desc) > 80) "...")
           ),
           tags$button(
             style = "flex: 0 0 auto; background: none; border: none; color: #a0aec0;
-                     cursor: pointer; font-size: 14px; padding: 2px 6px;
-                     border-radius: 4px;",
+                     cursor: pointer; font-size: 14px; padding: 2px 6px;",
             onclick = sprintf(
               "Shiny.setInputValue('ob_remove_persona', '%s', {priority: 'event'})",
-              p$name
-            ),
+              p$name),
             icon("times")
           )
         )
@@ -1450,7 +1522,6 @@ output$ob_selected_personas_ui <- renderUI({
   )
 })
 
-# Remove a persona from selected list
 observeEvent(input$ob_remove_persona, {
   name    <- input$ob_remove_persona
   current <- ob_selected_personas()
@@ -1460,7 +1531,7 @@ observeEvent(input$ob_remove_persona, {
 observeEvent(input$ob_step6_back, { onboarding_step(5) })
 
 # ============================================
-# Shared finish logic — called by both skip and finish
+# Finish onboarding
 # ============================================
 
 .run_finish_onboarding <- function(personas) {
@@ -1477,17 +1548,17 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
   country <- if (is.null(onboarding_data$reach_country) ||
                  !nzchar(onboarding_data$reach_country %||% "")) {
     NA_character_
-  } else { onboarding_data$reach_country }
+  } else onboarding_data$reach_country
   
   region <- if (is.null(onboarding_data$reach_region) ||
                 !nzchar(onboarding_data$reach_region %||% "")) {
     NA_character_
-  } else { onboarding_data$reach_region }
+  } else onboarding_data$reach_region
   
   postcode <- if (is.null(onboarding_data$reach_postcode) ||
                   !nzchar(onboarding_data$reach_postcode %||% "")) {
     NA_character_
-  } else { onboarding_data$reach_postcode }
+  } else onboarding_data$reach_postcode
   
   db_success     <- FALSE
   brand_id       <- NULL
@@ -1496,7 +1567,7 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
   
   tryCatch({
     
-    # --- Save / update main brand ---
+    # Save / update main brand
     existing <- dbGetQuery(pool,
                            "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1)",
                            params = list(brand_name))
@@ -1504,21 +1575,28 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
     if (nrow(existing) == 0) {
       brand_row <- dbGetQuery(pool,
                               "INSERT INTO dim_brand
-           (brand_name, brand_reach, reach_country, reach_region, reach_postcode, industry)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING brand_id",
-                              params = list(brand_name, brand_reach, country, region, postcode, industry))
+           (brand_name, brand_reach, reach_country,
+            reach_region, reach_postcode, industry)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING brand_id",
+                              params = list(brand_name, brand_reach, country,
+                                            region, postcode, industry))
       brand_id <- brand_row$brand_id[1]
     } else {
       brand_id <- existing$brand_id[1]
       dbExecute(pool,
                 "UPDATE dim_brand
-         SET brand_reach = $1, reach_country = $2, reach_region = $3,
-             reach_postcode = $4, industry = $5
+         SET brand_reach    = $1,
+             reach_country  = $2,
+             reach_region   = $3,
+             reach_postcode = $4,
+             industry       = $5
          WHERE brand_id = $6",
-                params = list(brand_reach, country, region, postcode, industry, brand_id))
+                params = list(brand_reach, country, region,
+                              postcode, industry, brand_id))
     }
     
-    # --- Link main brand ---
+    # Link main brand
     dbExecute(pool,
               "INSERT INTO fact_user_brands_tracked
          (login_id, brand_id, main_brand_flag, date_valid_from, industry)
@@ -1527,19 +1605,23 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
          SET industry = EXCLUDED.industry",
               params = list(login_id, brand_id, Sys.Date(), industry))
     
-    # --- Save competitors ---
+    # Save competitors
     if (length(competitors) > 0) {
       for (comp_name in competitors) {
         existing_comp <- dbGetQuery(pool,
-                                    "SELECT brand_id FROM dim_brand WHERE lower(brand_name) = lower($1)",
+                                    "SELECT brand_id FROM dim_brand
+           WHERE lower(brand_name) = lower($1)",
                                     params = list(comp_name))
         
         if (nrow(existing_comp) == 0) {
           comp_row <- dbGetQuery(pool,
                                  "INSERT INTO dim_brand
-               (brand_name, brand_reach, reach_country, reach_region, reach_postcode, industry)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING brand_id",
-                                 params = list(comp_name, brand_reach, country, region, postcode, industry))
+               (brand_name, brand_reach, reach_country,
+                reach_region, reach_postcode, industry)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING brand_id",
+                                 params = list(comp_name, brand_reach, country,
+                                               region, postcode, industry))
           comp_id <- comp_row$brand_id[1]
         } else {
           comp_id <- existing_comp$brand_id[1]
@@ -1557,7 +1639,7 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
       }
     }
     
-    # --- Save prompts ---
+    # Save prompts
     if (length(prompts) > 0) {
       for (prompt_text in prompts) {
         existing_q <- dbGetQuery(pool,
@@ -1566,7 +1648,8 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
         
         if (nrow(existing_q) == 0) {
           existing_q <- dbGetQuery(pool,
-                                   "INSERT INTO dim_query (query_string) VALUES ($1) RETURNING query_id",
+                                   "INSERT INTO dim_query (query_string)
+             VALUES ($1) RETURNING query_id",
                                    params = list(prompt_text))
         }
         
@@ -1596,23 +1679,22 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
       }
     }
     
-    # --- Save personas ---
+    # Save personas
     if (length(personas) > 0) {
       for (persona in personas) {
         pname <- persona$name
         pdesc <- persona$desc
         
-        # Check if standard persona already exists
         pid_row <- dbGetQuery(pool,
                               "SELECT profile_id FROM dim_customer_profile
            WHERE profile_name = $1 AND is_standard = TRUE",
                               params = list(pname))
         
         if (nrow(pid_row) == 0) {
-          # Create as custom persona
           pid_row <- dbGetQuery(pool,
                                 "INSERT INTO dim_customer_profile
-               (profile_name, profile_descriptor, is_standard, created_by_login, date_created)
+               (profile_name, profile_descriptor, is_standard,
+                created_by_login, date_created)
              VALUES ($1, $2, FALSE, $3, $4)
              RETURNING profile_id",
                                 params = list(pname, pdesc, login_id, Sys.Date()))
@@ -1629,16 +1711,17 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
       }
     }
     
-    # --- Dedupe brands ---
+    # Dedupe brands
     dedupe_user_brands_tracked(login_id)
     
-    # --- Mark onboarding complete ---
+    # Mark onboarding complete
     dbExecute(pool,
               "UPDATE dim_user SET onboarding_complete = TRUE WHERE login_id = $1",
               params = list(login_id))
     
     db_success <- TRUE
     message("=== DB SAVE SUCCESS ===")
+    
   }, error = function(e) {
     message("=== DB SAVE ERROR: ", e$message, " ===")
     showNotification(
@@ -1649,8 +1732,6 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
   
   message(sprintf("=== Setting onboarding_complete, db_success=%s ===", db_success))
   
-  # --- Update reactive values immediately ---
-  # This MUST be the last thing — always runs
   if (!is.null(brand_id)) rv$brand_id <- brand_id
   rv$brand_name          <- brand_name
   rv$onboarding_complete <- TRUE
@@ -1660,7 +1741,8 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
   message("=== rv$onboarding_complete set to TRUE ===")
   
   showNotification(
-    paste0("Welcome, ", brand_name, "! Calculating your scores in the background..."),
+    paste0("Welcome, ", brand_name,
+           "! Calculating your scores in the background..."),
     type = "message", duration = 8
   )
   
@@ -1672,9 +1754,7 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
     return()
   }
   
-  # --- Queue scoring jobs ---
-  
-  # Score main brand
+  # Queue scoring jobs
   dbExecute(pool,
             "INSERT INTO dim_job_queue (job_type, login_id, payload)
      VALUES ('score_brand', $1, $2)",
@@ -1683,7 +1763,6 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
               brand_id   = brand_id
             ), auto_unbox = TRUE)))
   
-  # Score main brand prompts
   if (length(prompts) > 0) {
     dbExecute(pool,
               "INSERT INTO dim_job_queue (job_type, login_id, payload)
@@ -1694,7 +1773,6 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
               ), auto_unbox = TRUE)))
   }
   
-  # Score competitors
   if (length(competitors) > 0) {
     for (comp_name in competitors) {
       comp_id <- comp_brand_ids[[comp_name]]
@@ -1709,7 +1787,6 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
     }
   }
   
-  # Score personas
   if (length(personas) > 0) {
     persona_ids <- dbGetQuery(pool,
                               "SELECT profile_id FROM fact_user_profiles_tracked
@@ -1727,6 +1804,13 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
                 ), auto_unbox = TRUE)))
     }
   }
+  
+  # If this is the onboarding demo account, schedule a reset on next logout
+  # Nothing needed here — logout handler handles it
+  # But log it so we know onboarding completed
+  if (is_onboarding_account(rv$email %||% "")) {
+    message("Onboarding demo account completed setup — will reset on logout")
+  }
 }
 
 observeEvent(input$ob_step6_skip, {
@@ -1739,7 +1823,6 @@ observeEvent(input$ob_step6_finish, {
   req(rv$logged_in, rv$login_id)
   .run_finish_onboarding(ob_selected_personas())
 })
-
 
 # ============================================
 # Helpers

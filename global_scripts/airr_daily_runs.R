@@ -1,21 +1,34 @@
-
 setwd("/home/aarogers/airr")
 source("global.R")
 
-# Create connection
-con <- dbConnect(
-  RPostgres::Postgres(),
-  dbname = Sys.getenv("DB_NAME"),
-  host = Sys.getenv("DB_HOST"),
-  port = Sys.getenv("DB_PORT"),
-  user = Sys.getenv("DB_USER"),
-  password = Sys.getenv("DB_PASSWORD")
+library(parallel)
+
+message("=== Daily run started: ", format(Sys.time()), " ===")
+message("Running refresh loop and prompt loop in parallel...")
+
+results <- mclapply(
+  list(
+    list(name = "refresh", fn = function() {
+      message("=== daily_refresh_loop START: ", format(Sys.time()), " ===")
+      tryCatch(
+        daily_refresh_loop(model = "gpt-4.1-mini"),
+        error = function(e) message("daily_refresh_loop ERROR: ", e$message)
+      )
+      message("=== daily_refresh_loop END: ", format(Sys.time()), " ===")
+    }),
+    list(name = "prompts", fn = function() {
+      # Small delay so refresh loop gets DB connection first
+      Sys.sleep(15)
+      message("=== daily_prompt_loop START: ", format(Sys.time()), " ===")
+      tryCatch(
+        daily_prompt_loop(model = "gpt-4.1-mini"),
+        error = function(e) message("daily_prompt_loop ERROR: ", e$message)
+      )
+      message("=== daily_prompt_loop END: ", format(Sys.time()), " ===")
+    })
+  ),
+  function(item) item$fn(),
+  mc.cores = 2
 )
 
-# running the below runs by default in "gpt-4o-mini". Add "gpt-4o" or other model name to change this
-# daily_refresh_loop(model = "gpt-4.1-mini")
-# daily_prompt_loop(model = "gpt-4.1-mini")
-# fallback_models = c("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o")
-daily_refresh_loop(model = "gpt-4.1-mini")
-daily_prompt_loop(model = "gpt-4.1-mini")
-
+message("=== Daily run complete: ", format(Sys.time()), " ===")

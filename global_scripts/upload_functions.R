@@ -219,7 +219,8 @@ calc_daily_airr <- function(con, brand_name, login_id, run_date) {
 # ============================================
 
 user_create_airr <- function(con, brand_name, login_id,
-                             model = "gpt-4o-mini") {
+                             model = "gpt-4o-mini",
+                             use_batch = TRUE) {
   message(sprintf("=== START user_create_airr: %s / user %d [%s] ===",
                   brand_name, login_id, format(Sys.time(), "%H:%M:%S")))
   brand_id <- get_or_create_brand_id(con, brand_name)
@@ -259,7 +260,8 @@ user_create_airr <- function(con, brand_name, login_id,
                                 reach_region   = region,
                                 reach_postcode = postcode,
                                 brand_id       = brand_id,  # new
-                                con            = con)  
+                                con            = con,
+                                use_batch      = use_batch)  
   
   message(sprintf("  Uploading scores for %s...", brand_name))
   upload_daily_refresh(con, brand_name, login_id, airr_scores,
@@ -506,7 +508,8 @@ create_prompt_airr_multiple <- function(con, brand_ids, query_string,
 # DAILY REFRESH LOOP
 # ============================================
 
-daily_refresh_loop <- function(model = "gpt-4o-mini") {
+daily_refresh_loop <- function(model = "gpt-4o-mini",
+                               use_batch = TRUE) {
   
   con <- make_con()
   on.exit(dbDisconnect(con), add = TRUE)
@@ -532,7 +535,8 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
       t0 <- Sys.time()
       message(sprintf("\n[%d/%d] %s / user %d...",
                       i, nrow(user_brand_list), brand, lid))
-      user_create_airr(con, brand, lid, model)
+      user_create_airr(con, brand, lid, model,
+                       use_batch = use_batch)   # pass through
       message(sprintf("  \u2713 Done in %.1fs",
                       as.numeric(difftime(Sys.time(), t0, units = "secs"))))
     }, error = function(e) {
@@ -568,7 +572,8 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
         t0 <- Sys.time()
         message(sprintf("\n  [%d/%d] %s (login: %d)...",
                         p, nrow(active_profiles), pname, lid))
-        score_profile(con, lid, pid, model)
+        score_profile(con, lid, pid, model,
+                      use_batch = use_batch)
         message(sprintf("  \u2713 Done in %.1fs",
                         as.numeric(difftime(Sys.time(), t0, units = "secs"))))
       }, error = function(e) {
@@ -596,7 +601,8 @@ daily_refresh_loop <- function(model = "gpt-4o-mini") {
 # DAILY PROMPT LOOP — uses aliases
 # ============================================
 
-daily_prompt_loop <- function(model = "gpt-4o-mini") {
+daily_prompt_loop <- function(model = "gpt-4o-mini",
+                              use_batch = TRUE) {
   
   con <- make_con()
   on.exit(dbDisconnect(con), add = TRUE)
@@ -668,9 +674,14 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
       
       unique_prompts  <- unique(brands_for_query$query_resolved)
       responses_cache <- list()
+      # When fetching responses per unique prompt
       for (uq in unique_prompts) {
         message(sprintf("  Fetching responses for: %s", substr(uq, 1, 60)))
-        responses_cache[[uq]] <- prompt_queries(rep(uq, 10), model = model, temperature = 0.5)
+        responses_cache[[uq]] <- prompt_queries(
+          rep(uq, 10),
+          model     = model,
+          use_batch = use_batch   # pass through
+        )
       }
       
       for (bid in unique(brands_for_query$brand_id)) {
@@ -764,6 +775,223 @@ daily_prompt_loop <- function(model = "gpt-4o-mini") {
                     length(failed), paste(failed, collapse = ", ")))
   } else {
     message("\nAll queries completed!")
+  }
+  
+  return(invisible(failed))
+}
+
+
+
+daily_refresh_loop_batch <- function(model = "gpt-4.1-mini") {
+  
+  con <- make_con()
+  on.exit(dbDisconnect(con), add = TRUE)
+  
+  user_brand_list <- dbGetQuery(con, "
+    SELECT ubt.login_id, b.brand_id, b.brand_name,
+           b.brand_reach, b.reach_country, b.reach_region,
+           b.reach_postcode, ubt.industry
+    FROM fact_user_brands_tracked ubt
+    JOIN dim_brand b ON b.brand_id = ubt.brand_id
+    WHERE ubt.date_valid_from <= CURRENT_DATE
+      AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to > CURRENT_DATE)
+    ORDER BY ubt.login_id, b.brand_name")
+  
+  n_brands <- nrow(user_brand_list)
+  message(sprintf("=== Daily Refresh Batch: %d brands ===", n_brands))
+  
+  # ── PHASE 1: Build ALL prompts for ALL brands ─────────────────────
+  message("\n--- Phase 1: Building prompt list ---")
+  
+  all_prompt_map   <- list()  # custom_id -> prompt text
+  brand_prompt_map <- list()  # brand_idx -> list of custom_ids in order
+  
+  for (i in seq_len(n_brands)) {
+    row      <- user_brand_list[i, ]
+    brand    <- row$brand_name
+    lid      <- row$login_id
+    industry <- if (is.na(row$industry)) NULL else row$industry
+    reach    <- row$brand_reach %||% "global"
+    country  <- if (is.na(row$reach_country))  NULL else row$reach_country
+    region   <- if (is.na(row$reach_region))   NULL else row$reach_region
+    postcode <- if (is.na(row$reach_postcode)) NULL else row$reach_postcode
+    
+    reach_context <- build_reach_context(reach, country, region, postcode)
+    reach_str     <- if (nzchar(reach_context)) paste0(" in ", reach_context) else ""
+    near_me_str   <- build_near_me_suffix(reach, country, postcode)
+    has_industry  <- !is.null(industry) && nzchar(industry)
+    industry_str  <- if (has_industry) industry else "their industry"
+    
+    reps    <- 10
+    prefix  <- sprintf("brand%d_user%d", i, lid)
+    
+    # Build the 220 prompts — same as all_queries() but without calling API
+    prompts_this_brand <- c(
+      rep(paste0('Who are the top 10 competitors for the brand ', brand, reach_str, '? Return only the brand names separated by semi-colons and no other information'), reps),
+      rep(paste0('In what industry is the brand ', brand, reach_str, '? Give your answer in the form "brand is in the __ industry", giving no other information'), reps),
+      rep(paste0('Tell me about the brand ', brand, reach_str), reps),
+      rep(paste0("When was ", brand, " founded? Give only the year, no other words."), reps),
+      rep(paste0("Where is ", brand, " headquartered", reach_str, "? Give only the city and country."), reps),
+      rep(paste0("Who is the current CEO of ", brand, "? Give only the name."), reps),
+      rep(paste0("What industry is ", brand, " in", reach_str, "? Give a one-sentence answer."), reps),
+      rep(paste0("Is ", brand, " owned by a parent company? If so, which one? Give only the name of the company or the word 'none'"), reps),
+      rep(paste0("What are the main products or services of ", brand, reach_str, "? List the top 3."), reps),
+      rep(paste0("How would you describe ", brand, "'s pricing strategy", reach_str, ": budget, mid-range, or premium? Only respond with one of those three options"), reps),
+      rep(paste0("Who is ", brand, "'s primary target market", reach_str, "?"), reps),
+      rep(paste0("What was a major milestone in ", brand, "'s history?"), reps),
+      rep(paste0("How did ", brand, " get started? Give a brief summary."), reps),
+      rep(paste0("Approximately how many employees does ", brand, " have? Give the answer as a number only"), reps),
+      rep(paste0("What is the approximate annual revenue of ", brand, "? Give the answer as a number of US dollars only"), reps),
+      rep(paste0("In which countries or regions does ", brand, " operate", reach_str, "? List only the country names with no extra information"), reps),
+      rep(paste0('What are the best brands in the ', industry_str, ' industry', if (nzchar(near_me_str)) near_me_str else reach_str, '?'), reps),
+      rep(paste0("What are the top brands in ", industry_str, if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps),
+      rep(paste0("Which companies lead the ", industry_str, " industry", if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps),
+      rep(paste0("Recommend some ", industry_str, " brands", if (nzchar(near_me_str)) near_me_str else reach_str), reps),
+      rep(paste0("What are popular ", industry_str, " companies", if (nzchar(near_me_str)) near_me_str else reach_str, "?"), reps),
+      rep(paste0("List major players in ", industry_str, if (nzchar(near_me_str)) near_me_str else reach_str), reps)
+    )
+    
+    # Assign unique custom IDs
+    ids_this_brand <- sprintf("%s_p%03d", prefix, seq_along(prompts_this_brand))
+    names(prompts_this_brand) <- ids_this_brand
+    
+    all_prompt_map              <- c(all_prompt_map, as.list(prompts_this_brand))
+    brand_prompt_map[[prefix]]  <- ids_this_brand
+    
+    message(sprintf("  Built %d prompts for brand %d/%d: %s",
+                    length(prompts_this_brand), i, n_brands, brand))
+  }
+  
+  total_prompts <- length(all_prompt_map)
+  message(sprintf("\n--- Phase 1 complete: %d total prompts for %d brands ---",
+                  total_prompts, n_brands))
+  
+  # ── PHASE 2: Submit ONE batch for everything ──────────────────────
+  message("\n--- Phase 2: Submitting single batch ---")
+  
+  all_responses <- tryCatch(
+    run_full_batch(all_prompt_map, model = model,
+                   temperature   = 0.1,
+                   poll_interval = 60,
+                   max_wait_mins = 180),
+    error = function(e) {
+      message(sprintf("Batch failed: %s\nFalling back to async...", e$message))
+      # Fallback to async if batch fails
+      resps <- ask_chatgpt_async(unlist(all_prompt_map), model = model,
+                                 temperature = 0.1)
+      setNames(resps, names(all_prompt_map))
+    }
+  )
+  
+  # ── PHASE 3: Score each brand using cached responses ─────────────
+  message("\n--- Phase 3: Scoring brands ---")
+  
+  failed <- c()
+  
+  for (i in seq_len(n_brands)) {
+    row   <- user_brand_list[i, ]
+    brand <- row$brand_name
+    lid   <- row$login_id
+    bid   <- row$brand_id
+    prefix <- sprintf("brand%d_user%d", i, lid)
+    
+    tryCatch({
+      t0   <- Sys.time()
+      ids  <- brand_prompt_map[[prefix]]
+      
+      # Extract this brand's responses in order
+      resps <- lapply(ids, function(id) all_responses[[id]])
+      
+      # Reconstruct the same structure as all_queries() returns
+      idx <- 0
+      grab <- function(n) {
+        result <- resps[(idx + 1):(idx + n)]
+        idx <<- idx + n
+        unlist(result)
+      }
+      
+      competitor_raw   <- grab(10); industry_raw     <- grab(10)
+      description_raw  <- grab(10); founded_raw      <- grab(10)
+      hq_raw           <- grab(10); ceo_raw          <- grab(10)
+      industry_det_raw <- grab(10); parent_raw       <- grab(10)
+      products_raw     <- grab(10); pricing_raw      <- grab(10)
+      target_raw       <- grab(10); milestone_raw    <- grab(10)
+      origin_raw       <- grab(10); employees_raw    <- grab(10)
+      revenue_raw      <- grab(10); countries_raw    <- grab(10)
+      best_brands_raw  <- grab(10); top_brands_raw   <- grab(10)
+      leading_raw      <- grab(10); rec_brands_raw   <- grab(10)
+      popular_raw      <- grab(10); major_raw        <- grab(10)
+      
+      # Build get_data structure
+      get_data <- list(
+        competitor_summary = competitor_raw %>%
+          unlist() %>% str_split(";") %>% unlist() %>% str_trim() %>%
+          tibble(competitor = .) %>% filter(nchar(competitor) > 0) %>%
+          count(competitor, sort = TRUE, name = "mentions") %>% head(9),
+        industry_summary = industry_raw %>%
+          unlist() %>% tibble(industry = .) %>%
+          mutate(industry_desc = substr(industry, 12 + nchar(brand),
+                                        nchar(industry) - 10)) %>%
+          filter(nchar(industry_desc) > 0) %>%
+          count(industry_desc, sort = TRUE, name = "mentions") %>% head(1),
+        comp_second_response_list = as.list(best_brands_raw),
+        description_list          = as.list(description_raw),
+        presence_data = list(
+          top_brands        = list(data = as.list(top_brands_raw),   type = "text", question = "Top brands"),
+          leading_brands    = list(data = as.list(leading_raw),      type = "text", question = "Leading brands"),
+          rec_brands        = list(data = as.list(rec_brands_raw),   type = "text", question = "Recommended brands"),
+          popular_companies = list(data = as.list(popular_raw),      type = "text", question = "Popular companies"),
+          major_players     = list(data = as.list(major_raw),        type = "text", question = "Major players")
+        ),
+        perception_data = list(
+          founded           = list(data = as.list(founded_raw),      type = "year",        question = "Founded"),
+          hq                = list(data = as.list(hq_raw),           type = "location",    question = "HQ"),
+          ceo               = list(data = as.list(ceo_raw),          type = "name",        question = "CEO"),
+          industry          = list(data = as.list(industry_det_raw), type = "text",        question = "Industry"),
+          parent_company    = list(data = as.list(parent_raw),       type = "categorical", question = "Parent"),
+          products_services = list(data = as.list(products_raw),     type = "list",        question = "Products"),
+          pricing           = list(data = as.list(pricing_raw),      type = "categorical", question = "Pricing"),
+          target_market     = list(data = as.list(target_raw),       type = "text",        question = "Target"),
+          milestone         = list(data = as.list(milestone_raw),    type = "text",        question = "Milestone"),
+          start             = list(data = as.list(origin_raw),       type = "text",        question = "Origin"),
+          num_employees     = list(data = as.list(employees_raw),    type = "numeric",     question = "Employees"),
+          revenue           = list(data = as.list(revenue_raw),      type = "numeric",     question = "Revenue"),
+          countries         = list(data = as.list(countries_raw),    type = "list",        question = "Countries")
+        )
+      )
+      
+      # Get search names including aliases
+      search_names <- get_brand_search_names(bid, brand, con)
+      
+      # Score
+      presence   <- calculate_presence_from_prompts(search_names,
+                                                    get_data$presence_data)
+      perception <- calculate_perception_from_prompts(brand, get_data)
+      prestige   <- calculate_prestige_from_prompts(brand, get_data)
+      
+      airr_scores <- list(presence   = presence,
+                          perception = perception,
+                          prestige   = prestige)
+      
+      upload_daily_refresh(con, brand, lid, airr_scores, Sys.Date())
+      calc_daily_persistance(con, brand, lid, Sys.Date())
+      calc_daily_airr(con, brand, lid, Sys.Date())
+      
+      message(sprintf("  \u2713 [%d/%d] %s / user %d (%.0fs)",
+                      i, n_brands, brand, lid,
+                      as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      
+    }, error = function(e) {
+      failed <<- c(failed, paste0(brand, "/user:", lid))
+      message(sprintf("  \u2717 [%d/%d] %s: %s", i, n_brands, brand, e$message))
+    })
+  }
+  
+  if (length(failed) > 0) {
+    message(sprintf("\n%d failures: %s", length(failed),
+                    paste(failed, collapse = ", ")))
+  } else {
+    message(sprintf("\n\u2713 All %d brands scored", n_brands))
   }
   
   return(invisible(failed))

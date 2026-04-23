@@ -1,7 +1,20 @@
 source("global.R")
 source("custom_css_stuff.R")
+# Tell Shiny the correct URL path when running behind a proxy
+options(shiny.port = 3838)
 
 server <- function(input, output, session) {
+  
+  # Fix download URLs when behind nginx proxy
+  observe({
+    query <- parseQueryString(session$clientData$url_search)
+    if (is.null(query[["w"]]) || !nzchar(query[["w"]] %||% "")) {
+      # Session worker ID missing — this can break downloads
+      # Log it so we can track
+      cat(sprintf("Session started without worker ID: %s\n",
+                  session$token))
+    }
+  })
   
   # Clean up when session ends
   session$onSessionEnded(function() {

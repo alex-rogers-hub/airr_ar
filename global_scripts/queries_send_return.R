@@ -9,7 +9,8 @@ all_queries <- function(brand_name,
                         brand_reach    = "global",
                         reach_country  = NULL,
                         reach_region   = NULL,
-                        reach_postcode = NULL) {
+                        reach_postcode = NULL,
+                        use_batch      = TRUE) {
   
   reach_context <- build_reach_context(brand_reach, reach_country,
                                        reach_region, reach_postcode)
@@ -67,11 +68,22 @@ all_queries <- function(brand_name,
                if (nzchar(near_me_str)) near_me_str else reach_str), reps)
   )
   
-  all_responses <- ask_chatgpt_async(
-    prompts     = prompts,
-    model       = model,
-    temperature = temperature
-  )
+  # Single API call — batch or async depending on context
+  all_responses <- if (use_batch) {
+    ask_chatgpt_batch(
+      prompts       = prompts,
+      model         = model,
+      temperature   = temperature,
+      poll_interval = 30,
+      max_wait_mins = 120
+    )
+  } else {
+    ask_chatgpt_async(
+      prompts     = prompts,
+      model       = model,
+      temperature = temperature
+    )
+  }
   
   idx <- 0
   grab <- function(n) {
@@ -236,13 +248,24 @@ all_queries <- function(brand_name,
 
 prompt_queries <- function(prompt_input,
                            model       = "gpt-4o-mini",
-                           temperature = 0.3) {
+                           temperature = 0.3,
+                           use_batch   = FALSE) {
   
-  comp_response_list <- ask_chatgpt_async(
-    prompts     = prompt_input,
-    model       = model,
-    temperature = temperature
-  )
+  comp_response_list <- if (use_batch) {
+    ask_chatgpt_batch(
+      prompts       = prompt_input,
+      model         = model,
+      temperature   = temperature,
+      poll_interval = 30,
+      max_wait_mins = 60
+    )
+  } else {
+    ask_chatgpt_async(
+      prompts     = prompt_input,
+      model       = model,
+      temperature = temperature
+    )
+  }
   
   resp_df <- data.frame(
     prompt    = prompt_input,

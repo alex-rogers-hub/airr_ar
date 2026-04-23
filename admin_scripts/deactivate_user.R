@@ -104,6 +104,6 @@ deactivate_user <- function(inactive_login_ids){
 }
 
 # example
-deactivate_user(inactive_login_ids = c(11,18,28,29))
+deactivate_user(inactive_login_ids = c(38,41,55,56,57,59,63))
 
 

@@ -190,6 +190,12 @@ pro_cost <- calculate_user_daily_cost(
   n_personas    = 3
 )
 
+sfa_cost <- calculate_user_daily_cost(
+  n_competitors = 5,
+  n_prompts     = 3,
+  n_personas    = 0
+)
+
 
 starter_profit <- 99 - starter_cost$monthly$total
 pro_profit <- 349 - pro_cost$monthly$total

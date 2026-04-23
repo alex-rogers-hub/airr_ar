@@ -1811,6 +1811,17 @@ observeEvent(input$ob_step6_back, { onboarding_step(5) })
   if (is_onboarding_account(rv$email %||% "")) {
     message("Onboarding demo account completed setup — will reset on logout")
   }
+  
+  # Update account_name to match brand name for regular accounts
+  tryCatch(
+    dbExecute(pool, "
+    UPDATE dim_user
+    SET account_name = $1
+    WHERE login_id = $2
+      AND (is_linked_account = FALSE OR is_linked_account IS NULL)",
+              params = list(brand_name, login_id)),
+    error = function(e) NULL
+  )
 }
 
 observeEvent(input$ob_step6_skip, {

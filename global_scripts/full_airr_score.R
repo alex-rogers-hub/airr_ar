@@ -10,7 +10,8 @@ full_air_score <- function(brand_name,
                            reach_region   = NULL,
                            reach_postcode = NULL,
                            brand_id       = NULL,   # new — for alias lookup
-                           con            = NULL) { # new — for alias lookup
+                           con            = NULL,
+                           use_batch      = TRUE) { 
   
   get_data <- all_queries(brand_name,
                           industry       = industry,
@@ -18,7 +19,8 @@ full_air_score <- function(brand_name,
                           brand_reach    = brand_reach,
                           reach_country  = reach_country,
                           reach_region   = reach_region,
-                          reach_postcode = reach_postcode)
+                          reach_postcode = reach_postcode,
+                          use_batch      = use_batch)
   
   # Build search names — main brand name + any aliases
   search_names <- if (!is.null(brand_id) && !is.null(con)) {

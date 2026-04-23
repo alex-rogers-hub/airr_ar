@@ -1284,94 +1284,153 @@ output$dash_query_chart_persistence <- renderPlotly({
 output$download_brand_data <- downloadHandler(
   filename = function() paste0("airr_brand_data_", Sys.Date(), ".csv"),
   content = function(file) {
-    req(user_all_brand_ids())
+    
+    log_file <- "/tmp/airr_download_debug.log"
+    cat(sprintf("\n=== download_brand_data: %s ===\n",
+                format(Sys.time())), file = log_file, append = TRUE)
+    
+    # Get data outside tryCatch so req() silently cancels cleanly
     brands    <- user_all_brand_ids()
     login_id  <- rv$login_id
-    brand_ids <- brands$brand_id
+    
+    if (is.null(brands) || nrow(brands) == 0 || is.null(login_id)) {
+      cat("No brands or login_id — aborting\n", file = log_file, append = TRUE)
+      write.csv(data.frame(error = "No data available"), file, row.names = FALSE)
+      return()
+    }
+    
+    brand_ids    <- brands$brand_id
     placeholders <- paste0("$", 2:(length(brand_ids) + 1), collapse = ", ")
     
-    # --- Overall scores ---
-    overall <- dbGetQuery(pool, sprintf("
-      SELECT 
-        db.brand_name,
-        fa.date,
-        'Overall'          AS persona,
-        fa.airr_score,
-        fpres.overall_score   AS presence_score,
-        fperc.perception_score,
-        fprest.prestige_score,
-        fpers.persistence_score
-      FROM dim_brand db
-      LEFT JOIN fact_airr_history fa
-        ON db.brand_id = fa.brand_id AND fa.login_id = $1
-      LEFT JOIN fact_presence_history fpres
-        ON db.brand_id = fpres.brand_id
-        AND fpres.date = fa.date AND fpres.login_id = $1
-      LEFT JOIN fact_perception_history fperc
-        ON db.brand_id = fperc.brand_id
-        AND fperc.date = fa.date AND fperc.login_id = $1
-      LEFT JOIN fact_prestige_history fprest
-        ON db.brand_id = fprest.brand_id
-        AND fprest.date = fa.date AND fprest.login_id = $1
-      LEFT JOIN fact_persistence_history fpers
-        ON db.brand_id = fpers.brand_id
-        AND fpers.date = fa.date AND fpers.login_id = $1
-      WHERE db.brand_id IN (%s)
-        AND fa.airr_score IS NOT NULL
-      ORDER BY db.brand_name, fa.date
-    ", placeholders), params = as.list(c(login_id, brand_ids)))
+    cat(sprintf("login_id: %s\n", login_id), file = log_file, append = TRUE)
+    cat(sprintf("brand_ids: %s\n", paste(brand_ids, collapse = ", ")),
+        file = log_file, append = TRUE)
     
-    # --- Persona scores (Enterprise only) ---
+    overall <- tryCatch({
+      cat("Running overall query...\n", file = log_file, append = TRUE)
+      
+      result <- dbGetQuery(pool, sprintf("
+        SELECT
+          db.brand_name,
+          fa.date,
+          'Overall' AS persona,
+          fa.airr_score,
+          fpres.overall_score   AS presence_score,
+          fperc.perception_score,
+          fprest.prestige_score,
+          fpers.persistence_score
+        FROM dim_brand db
+        LEFT JOIN fact_airr_history fa
+          ON db.brand_id = fa.brand_id AND fa.login_id = $1
+        LEFT JOIN fact_presence_history fpres
+          ON db.brand_id = fpres.brand_id
+          AND fpres.date = fa.date AND fpres.login_id = $1
+        LEFT JOIN fact_perception_history fperc
+          ON db.brand_id = fperc.brand_id
+          AND fperc.date = fa.date AND fperc.login_id = $1
+        LEFT JOIN fact_prestige_history fprest
+          ON db.brand_id = fprest.brand_id
+          AND fprest.date = fa.date AND fprest.login_id = $1
+        LEFT JOIN fact_persistence_history fpers
+          ON db.brand_id = fpers.brand_id
+          AND fpers.date = fa.date AND fpers.login_id = $1
+        WHERE db.brand_id IN (%s)
+          AND fa.airr_score IS NOT NULL
+        ORDER BY db.brand_name, fa.date
+      ", placeholders), params = as.list(c(login_id, brand_ids)))
+      
+      cat(sprintf("Overall rows: %d\n", nrow(result)),
+          file = log_file, append = TRUE)
+      result
+      
+    }, error = function(e) {
+      cat(sprintf("OVERALL QUERY ERROR: %s\n", e$message),
+          file = log_file, append = TRUE)
+      data.frame()
+    })
+    
     persona_data <- tryCatch({
+      cat("Running persona query...\n", file = log_file, append = TRUE)
       
       active_personas <- dbGetQuery(pool, "
-        SELECT upt.profile_id, dcp.profile_name
-        FROM fact_user_profiles_tracked upt
-        JOIN dim_customer_profile dcp ON dcp.profile_id = upt.profile_id
-        WHERE upt.login_id = $1
-          AND upt.date_valid_from <= CURRENT_DATE
-          AND (upt.date_valid_to IS NULL OR upt.date_valid_to >= CURRENT_DATE)
-        ORDER BY dcp.profile_name
-      ", params = list(login_id))
+    SELECT upt.profile_id, dcp.profile_name
+    FROM fact_user_profiles_tracked upt
+    JOIN dim_customer_profile dcp ON dcp.profile_id = upt.profile_id
+    WHERE upt.login_id = $1
+      AND upt.date_valid_from <= CURRENT_DATE
+      AND (upt.date_valid_to IS NULL OR upt.date_valid_to >= CURRENT_DATE)
+    ORDER BY dcp.profile_name",
+                                    params = list(login_id))
       
-      if (nrow(active_personas) == 0) return(NULL)
+      cat(sprintf("Active personas: %d\n", nrow(active_personas)),
+          file = log_file, append = TRUE)
       
-      persona_rows <- lapply(1:nrow(active_personas), function(p) {
-        pid   <- active_personas$profile_id[p]
-        pname <- active_personas$profile_name[p]
+      # FIX: don't use return() inside tryCatch — assign NULL directly
+      if (nrow(active_personas) == 0) {
+        NULL  # this is the value of the tryCatch expression
+      } else {
         
-        dbGetQuery(pool, sprintf("
-          SELECT
-            db.brand_name,
-            fpbh.date,
-            $2                 AS persona,
-            fpbh.airr_score,
-            fpbh.presence_score,
-            fpbh.perception_score,
-            fpbh.prestige_score,
-            fpbh.persistence_score
-          FROM fact_profile_brand_history fpbh
-          JOIN dim_brand db ON db.brand_id = fpbh.brand_id
-          WHERE fpbh.profile_id = $1
-            AND fpbh.brand_id IN (%s)
-            AND fpbh.airr_score IS NOT NULL
-          ORDER BY db.brand_name, fpbh.date
-        ", placeholders), params = as.list(c(pid, pname, brand_ids)))
-      })
+        persona_rows <- lapply(1:nrow(active_personas), function(p) {
+          pid   <- active_personas$profile_id[p]
+          pname <- active_personas$profile_name[p]
+          
+          cat(sprintf("  Persona: %s\n", pname),
+              file = log_file, append = TRUE)
+          
+          persona_placeholders <- paste0("$", 2:(length(brand_ids) + 1),
+                                         collapse = ", ")
+          
+          rows <- dbGetQuery(pool, sprintf("
+        SELECT
+          db.brand_name,
+          fpbh.date,
+          fpbh.airr_score,
+          fpbh.presence_score,
+          fpbh.perception_score,
+          fpbh.prestige_score,
+          fpbh.persistence_score
+        FROM fact_profile_brand_history fpbh
+        JOIN dim_brand db ON db.brand_id = fpbh.brand_id
+        WHERE fpbh.profile_id = $1
+          AND fpbh.brand_id IN (%s)
+          AND fpbh.airr_score IS NOT NULL
+        ORDER BY db.brand_name, fpbh.date
+      ", persona_placeholders),
+                             params = as.list(c(pid, brand_ids)))
+          
+          if (nrow(rows) > 0) rows$persona <- pname
+          rows
+        })
+        
+        bind_rows(persona_rows)
+      }
       
-      bind_rows(persona_rows)
-      
-    }, error = function(e) NULL)
+    }, error = function(e) {
+      cat(sprintf("PERSONA ERROR: %s\n", e$message),
+          file = log_file, append = TRUE)
+      NULL
+    })
     
-    # --- Combine and write ---
+    # Combine
+    cat("Combining data...\n", file = log_file, append = TRUE)
+    
     combined <- if (!is.null(persona_data) && nrow(persona_data) > 0) {
+      persona_data <- persona_data %>%
+        select(brand_name, date, persona, airr_score,
+               presence_score, perception_score,
+               prestige_score, persistence_score)
       bind_rows(overall, persona_data) %>%
         arrange(brand_name, persona, date)
     } else {
       overall
     }
     
+    cat(sprintf("Writing %d rows to CSV...\n", nrow(combined)),
+        file = log_file, append = TRUE)
+    
     write.csv(combined, file, row.names = FALSE)
+    
+    cat("=== SUCCESS ===\n", file = log_file, append = TRUE)
   }
 )
 
@@ -1389,25 +1448,31 @@ output$download_rankings_data <- downloadHandler(
 output$download_prompt_data <- downloadHandler(
   filename = function() paste0("airr_prompt_data_", Sys.Date(), ".csv"),
   content = function(file) {
-    req(user_all_brand_ids())
     
     brands    <- user_all_brand_ids()
     login_id  <- rv$login_id
+    
+    if (is.null(brands) || nrow(brands) == 0 || is.null(login_id)) {
+      write.csv(data.frame(error = "No data available"), file, row.names = FALSE)
+      return()
+    }
+    
     brand_ids <- brands$brand_id
     
     # Get all user's tracked queries
     user_queries <- get_user_tracked_queries(login_id)
     
     if (nrow(user_queries) == 0) {
-      write.csv(data.frame(), file, row.names = FALSE)
+      write.csv(data.frame(error = "No prompts tracked"), file, row.names = FALSE)
       return()
     }
     
-    # --- Overall prompt scores — one query per brand/query combo ---
+    # ── Overall prompt scores ──────────────────────────────────────────
     overall <- tryCatch({
       
       brand_ph <- paste0("$", seq_along(brand_ids), collapse = ", ")
-      query_ph <- paste0("$", (length(brand_ids) + 1):(length(brand_ids) + nrow(user_queries)),
+      query_ph <- paste0("$", (length(brand_ids) + 1):
+                           (length(brand_ids) + nrow(user_queries)),
                          collapse = ", ")
       
       dbGetQuery(pool, sprintf("
@@ -1436,7 +1501,7 @@ output$download_prompt_data <- downloadHandler(
       data.frame()
     })
     
-    # --- Persona prompt scores ---
+    # ── Persona prompt scores ──────────────────────────────────────────
     persona_data <- tryCatch({
       
       active_personas <- dbGetQuery(pool, "
@@ -1446,57 +1511,74 @@ output$download_prompt_data <- downloadHandler(
         WHERE upt.login_id = $1
           AND upt.date_valid_from <= CURRENT_DATE
           AND (upt.date_valid_to IS NULL OR upt.date_valid_to >= CURRENT_DATE)
-        ORDER BY dcp.profile_name
-      ", params = list(login_id))
+        ORDER BY dcp.profile_name",
+                                    params = list(login_id))
       
-      if (nrow(active_personas) == 0) return(NULL)
-      
-      persona_rows <- lapply(1:nrow(active_personas), function(p) {
-        pid   <- active_personas$profile_id[p]
-        pname <- active_personas$profile_name[p]
+      # FIX: NULL not return(NULL)
+      if (nrow(active_personas) == 0) {
+        NULL
+      } else {
         
-        brand_ph <- paste0("$", 3:(length(brand_ids) + 2), collapse = ", ")
-        query_ph <- paste0("$", (length(brand_ids) + 3):(length(brand_ids) + nrow(user_queries) + 2),
-                           collapse = ", ")
+        persona_rows <- lapply(1:nrow(active_personas), function(p) {
+          pid   <- active_personas$profile_id[p]
+          pname <- active_personas$profile_name[p]
+          
+          brand_ph <- paste0("$", 3:(length(brand_ids) + 2), collapse = ", ")
+          query_ph <- paste0("$", (length(brand_ids) + 3):
+                               (length(brand_ids) + nrow(user_queries) + 2),
+                             collapse = ", ")
+          
+          tryCatch(
+            {
+              rows <- dbGetQuery(pool, sprintf("
+                SELECT
+                  db.brand_name,
+                  fpqh.date,
+                  dq.query_string     AS prompt,
+                  fpqh.airr_score,
+                  fpqh.presence_score,
+                  fpqh.perception_score,
+                  fpqh.prestige_score,
+                  fpqh.persistence_score
+                FROM fact_profile_query_history fpqh
+                JOIN dim_brand db ON db.brand_id = fpqh.brand_id
+                JOIN dim_query dq  ON dq.query_id  = fpqh.query_id
+                WHERE fpqh.profile_id = $1
+                  AND fpqh.brand_id  IN (%s)
+                  AND fpqh.query_id  IN (%s)
+                  AND fpqh.airr_score IS NOT NULL
+                ORDER BY dq.query_string, db.brand_name, fpqh.date
+              ", brand_ph, query_ph),
+                                 params = as.list(c(pid, brand_ids, user_queries$query_id)))
+              
+              # Add persona name in R — avoids SQL param numbering collision
+              if (nrow(rows) > 0) rows$persona <- pname
+              rows
+            },
+            error = function(e) {
+              message("Persona prompt export error for ", pname, ": ", e$message)
+              data.frame()
+            }
+          )
+        })
         
-        tryCatch(
-          dbGetQuery(pool, sprintf("
-            SELECT
-              db.brand_name,
-              fpqh.date,
-              $2                  AS persona,
-              dq.query_string     AS prompt,
-              fpqh.airr_score,
-              fpqh.presence_score,
-              fpqh.perception_score,
-              fpqh.prestige_score,
-              fpqh.persistence_score
-            FROM fact_profile_query_history fpqh
-            JOIN dim_brand db ON db.brand_id = fpqh.brand_id
-            JOIN dim_query dq  ON dq.query_id  = fpqh.query_id
-            WHERE fpqh.profile_id = $1
-              AND fpqh.brand_id  IN (%s)
-              AND fpqh.query_id  IN (%s)
-              AND fpqh.airr_score IS NOT NULL
-            ORDER BY dq.query_string, db.brand_name, fpqh.date
-          ", brand_ph, query_ph),
-                     params = as.list(c(pid, pname, brand_ids, user_queries$query_id))),
-          error = function(e) {
-            message("Persona prompt export error for ", pname, ": ", e$message)
-            data.frame()
-          }
-        )
-      })
-      
-      bind_rows(persona_rows)
+        bind_rows(persona_rows)
+      }
       
     }, error = function(e) {
       message("Persona section error: ", e$message)
       NULL
     })
     
-    # --- Combine and write ---
+    # ── Combine and write ──────────────────────────────────────────────
     combined <- if (!is.null(persona_data) && nrow(persona_data) > 0) {
+      
+      # Reorder persona columns to match overall
+      persona_data <- persona_data %>%
+        select(brand_name, date, persona, prompt,
+               airr_score, presence_score, perception_score,
+               prestige_score, persistence_score)
+      
       bind_rows(overall, persona_data) %>%
         arrange(prompt, brand_name, persona, date)
     } else {
@@ -1728,31 +1810,31 @@ render_compact_rankings <- function(data, accent_color = "#667eea") {
   
   # ── Zero-score cleaning ───────────────────────────────────────────────
   # If any P score is 0 for a row, treat all P scores and AiRR as NA
-  data <- data %>%
-    mutate(
-      any_p_zero = (
-        (is.na(presence_score)    | presence_score    == 0) |
-          (is.na(perception_score)  | perception_score  == 0) |
-          (is.na(prestige_score)    | prestige_score    == 0) |
-          (is.na(persistence_score) | persistence_score == 0)
-      ),
-      airr_score        = ifelse(any_p_zero, NA_real_, airr_score),
-      presence_score    = ifelse(any_p_zero, NA_real_, presence_score),
-      perception_score  = ifelse(any_p_zero, NA_real_, perception_score),
-      prestige_score    = ifelse(any_p_zero, NA_real_, prestige_score),
-      persistence_score = ifelse(any_p_zero, NA_real_, persistence_score)
-    ) %>%
-    select(-any_p_zero)
+  # data <- data %>%
+  #   mutate(
+  #     any_p_zero = (
+  #       (is.na(presence_score)    | presence_score    == 0) |
+  #         (is.na(perception_score)  | perception_score  == 0) |
+  #         (is.na(prestige_score)    | prestige_score    == 0) |
+  #         (is.na(persistence_score) | persistence_score == 0)
+  #     ),
+  #     airr_score        = ifelse(any_p_zero, NA_real_, airr_score),
+  #     presence_score    = ifelse(any_p_zero, NA_real_, presence_score),
+  #     perception_score  = ifelse(any_p_zero, NA_real_, perception_score),
+  #     prestige_score    = ifelse(any_p_zero, NA_real_, prestige_score),
+  #     persistence_score = ifelse(any_p_zero, NA_real_, persistence_score)
+  #   ) %>%
+  #   select(-any_p_zero)
   
-  # Show NA for zero scores
-  fmt_score <- function(val) {
+  # Show NA only for zero or missing — show all other values
+  fmt_score <- function(val, digits = 0) {
     if (is.na(val) || is.null(val) || val == 0) return("NA")
-    round(val, 0)
+    round(val, digits)
   }
   
-  fmt_score_airr <- function(val) {
+  fmt_score_airr <- function(val, digits = 1) {
     if (is.na(val) || is.null(val) || val == 0) return("NA")
-    round(val, 1)
+    round(val, digits)
   }
   
   score_color <- function(val) {
@@ -1762,8 +1844,10 @@ render_compact_rankings <- function(data, accent_color = "#667eea") {
   
   score_cell <- function(val) {
     div(
-      style = "flex: 0 0 52px; text-align: center; font-size: 12px;
-               font-weight: 600; color: #4a5568;",
+      style = paste0(
+        "flex: 0 0 52px; text-align: center; font-size: 12px; ",
+        "font-weight: 600; color: #4a5568;"
+      ),
       fmt_score(val)
     )
   }
@@ -3136,16 +3220,16 @@ output$sticky_leaderboard_ui <- renderUI({
   
   # Apply zero-score cleaning
   scores <- scores %>%
-    mutate(
-      any_p_zero = (
-        (is.na(presence_score)    | presence_score    == 0) |
-          (is.na(perception_score)  | perception_score  == 0) |
-          (is.na(prestige_score)    | prestige_score    == 0) |
-          (is.na(persistence_score) | persistence_score == 0)
-      ),
-      airr_score = ifelse(any_p_zero | airr_score == 0, NA_real_, airr_score)
-    ) %>%
-    select(-any_p_zero) %>%
+    # mutate(
+    #   any_p_zero = (
+    #     (is.na(presence_score)    | presence_score    == 0) |
+    #       (is.na(perception_score)  | perception_score  == 0) |
+    #       (is.na(prestige_score)    | prestige_score    == 0) |
+    #       (is.na(persistence_score) | persistence_score == 0)
+    #   ),
+    #   airr_score = ifelse(any_p_zero | airr_score == 0, NA_real_, airr_score)
+    # ) %>%
+    # select(-any_p_zero) %>%
     arrange(desc(airr_score)) %>%
     mutate(rank = row_number())
   

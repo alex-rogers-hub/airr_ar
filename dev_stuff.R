@@ -3481,3 +3481,284 @@ dbExecute(pool, "
   CREATE INDEX IF NOT EXISTS idx_brand_aliases_brand_id 
   ON dim_brand_aliases(brand_id)
 ")
+
+
+
+result <- dbGetQuery(pool, "
+    SELECT *
+    FROM dim_job_queue
+  ")
+
+
+
+brand_name = 'Living Group'
+model          = "gpt-4o-mini"
+industry       = 'creative agency'
+brand_reach    = "global"
+reach_country  = NULL
+reach_region   = NULL
+reach_postcode = NULL
+brand_id       = 261   # new — for alias lookup
+con            = con
+
+
+
+
+full_air_score <- function(brand_name,
+                           model          = "gpt-4o-mini",
+                           industry       = NULL,
+                           brand_reach    = "global",
+                           reach_country  = NULL,
+                           reach_region   = NULL,
+                           reach_postcode = NULL,
+                           brand_id       = NULL,   # new — for alias lookup
+                           con            = NULL) { # new — for alias lookup
+  
+  get_data <- all_queries(brand_name,
+                          industry       = industry,
+                          model          = model,
+                          brand_reach    = brand_reach,
+                          reach_country  = reach_country,
+                          reach_region   = reach_region,
+                          reach_postcode = reach_postcode)
+  
+  # Build search names — main brand name + any aliases
+  search_names <- if (!is.null(brand_id) && !is.null(con)) {
+    get_brand_search_names(brand_id, brand_name, con)
+  } else {
+    brand_name  # fallback — no alias lookup
+  }
+  
+  message(sprintf("  Presence search names: %s",
+                  paste(search_names, collapse = ", ")))
+  
+  presence   <- calculate_presence_from_prompts(search_names,
+                                                get_data$presence_data)
+  perception <- calculate_perception_from_prompts(brand_name, get_data)
+  prestige   <- calculate_prestige_from_prompts(brand_name, get_data)
+  
+  airr_scores            <- list()
+  airr_scores$presence   <- presence
+  airr_scores$perception <- perception
+  airr_scores$prestige   <- prestige
+  
+  return(airr_scores)
+}
+
+# who publishes the best rankings of asset management firms based on brand and digital presence?
+
+# Create first linked account for a user
+create_linked_account(
+  primary_email = "client@company.com",
+  link_number   = 1,
+  password      = "Welcome2024!",
+  n_competitors = 10,
+  n_prompts     = 10,
+  n_personas    = 3
+)
+# Creates: link1.client@company.com
+
+# Create second linked account with more slots
+create_linked_account(
+  primary_email = "client@company.com",
+  link_number   = 2,
+  password      = "Welcome2024!",
+  n_competitors = 15,   # 5 more than Enterprise base of 10
+  n_prompts     = 20,   # 10 more than Enterprise base
+  n_personas    = 5
+)
+# Creates: link2.client@company.com
+
+# View all linked accounts for a user
+primary <- dbGetQuery(pool,
+                      "SELECT login_id FROM dim_user WHERE email = 'client@company.com'")
+
+get_linked_accounts(primary$login_id[1])
+
+
+
+dbGetQuery(pool, "
+  SELECT login_id, email, account_name, is_linked_account
+  FROM dim_user
+  WHERE is_linked_account = TRUE
+")
+
+# Get the current messy email
+current <- dbGetQuery(pool, "
+  SELECT login_id, email FROM dim_user WHERE is_linked_account = TRUE
+")
+
+# Build the clean version
+clean_email <- gsub("\\s+", "", tolower(trimws(current$email[1])))
+
+cat("Current:", repr(current$email[1]), "\n")
+cat("Clean:  ", clean_email, "\n")
+
+# Update it
+dbExecute(pool, "
+  UPDATE dim_user
+  SET email = $1
+  WHERE login_id = $2",
+          params = list(clean_email, current$login_id[1]))
+
+# Verify
+dbGetQuery(pool, "
+  SELECT login_id, email, account_name
+  FROM dim_user
+  WHERE is_linked_account = TRUE
+")
+
+
+
+
+
+resp <- httr2::request("https://api.openai.com/v1/chat/completions") |>
+  httr2::req_headers(
+    Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+    `Content-Type` = "application/json"
+  ) |>
+  httr2::req_body_json(list(
+    model = "gpt-4o-mini",          # cheap model just to probe headers
+    messages = list(
+      list(role = "user", content = "hi")
+    ),
+    max_tokens = 1L                  # minimize cost/tokens used
+  )) |>
+  httr2::req_perform()
+
+headers <- httr2::resp_headers(resp)
+
+cat("Requests limit:     ", headers$`x-ratelimit-limit-requests`, "\n")
+cat("Requests remaining: ", headers$`x-ratelimit-remaining-requests`, "\n")
+cat("Tokens limit:       ", headers$`x-ratelimit-limit-tokens`, "\n")
+cat("Tokens remaining:   ", headers$`x-ratelimit-remaining-tokens`, "\n")
+cat("Reset requests at:  ", headers$`x-ratelimit-reset-requests`, "\n")
+cat("Reset tokens at:    ", headers$`x-ratelimit-reset-tokens`, "\n")
+
+
+
+# Catch the error and inspect it
+resp <- tryCatch(
+  httr2::request("https://api.openai.com/v1/chat/completions") |>
+    httr2::req_headers(
+      Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+      `Content-Type` = "application/json"
+    ) |>
+    httr2::req_body_json(list(
+      model = "gpt-4o-mini",
+      messages = list(list(role = "user", content = "hi")),
+      max_tokens = 1L
+    )) |>
+    httr2::req_error(is_error = \(resp) FALSE) |>  # don't throw on 4xx/5xx
+    httr2::req_perform(),
+  error = function(e) e
+)
+
+# Now inspect regardless of 429
+headers <- httr2::resp_headers(resp)
+
+cat("Status:             ", httr2::resp_status(resp), "\n")
+cat("Requests limit:     ", headers$`x-ratelimit-limit-requests`, "\n")
+cat("Requests remaining: ", headers$`x-ratelimit-remaining-requests`, "\n")
+cat("Tokens limit:       ", headers$`x-ratelimit-limit-tokens`, "\n")
+cat("Tokens remaining:   ", headers$`x-ratelimit-remaining-tokens`, "\n")
+cat("Reset requests at:  ", headers$`x-ratelimit-reset-requests`, "\n")
+cat("Reset tokens at:    ", headers$`x-ratelimit-reset-tokens`, "\n")
+
+# Also print the error body - tells you WHAT limit you hit
+cat("\nError body:\n")
+print(httr2::resp_body_json(resp))
+
+
+pool <- dbPool(
+  drv = RPostgres::Postgres(),
+  dbname = Sys.getenv("DB_NAME"),
+  host = Sys.getenv("DB_HOST"),
+  port = Sys.getenv("DB_PORT"),
+  user = Sys.getenv("DB_USER"),
+  password = Sys.getenv("DB_PASSWORD"),
+  # Connection-level statement timeout — kills any query running > 30s
+  options  = "-c statement_timeout=30000"
+)
+
+con <- DBI::dbConnect(
+  RPostgres::Postgres(),
+  dbname = Sys.getenv("DB_NAME"),
+  host = Sys.getenv("DB_HOST"),
+  port = Sys.getenv("DB_PORT"),
+  user = Sys.getenv("DB_USER"),
+  password = Sys.getenv("DB_PASSWORD")
+)
+
+cat('Connected OK\n')
+res <- DBI::dbGetQuery(con, 'SELECT COUNT(*) FROM dim_user')
+cat('User count:', res[[1]], '\n')
+DBI::dbDisconnect(con)
+
+
+
+
+# Set accounts 51, 52, 53, 54 as linked to master account 42
+
+# Step 1: Check what we're working with first
+dbGetQuery(pool, "
+  SELECT login_id, email, account_name, 
+         is_linked_account, primary_login_id
+  FROM dim_user
+  WHERE login_id IN (42, 51, 52, 53, 54)
+  ORDER BY login_id
+")
+
+# Step 2: Get master account details
+master <- dbGetQuery(pool, "
+  SELECT login_id, email, account_name FROM dim_user WHERE login_id = 42
+")
+cat("Master account:", master$email, "\n")
+
+# Step 3: Link the accounts
+linked_ids <- c(51, 52, 53, 54)
+
+for (lid in linked_ids) {
+  dbExecute(pool, "
+    UPDATE dim_user
+    SET is_linked_account  = TRUE,
+        primary_login_id   = 42
+    WHERE login_id = $1",
+            params = list(lid))
+  cat(sprintf("✓ login_id %d linked to master (42)\n", lid))
+}
+
+# Step 4: Verify
+dbGetQuery(pool, "
+  SELECT 
+    u.login_id,
+    u.email,
+    COALESCE(u.account_name, b.brand_name, u.email) AS display_name,
+    u.is_linked_account,
+    u.primary_login_id
+  FROM dim_user u
+  LEFT JOIN fact_user_brands_tracked ubt
+    ON ubt.login_id = u.login_id
+    AND ubt.main_brand_flag = TRUE
+    AND ubt.date_valid_from <= CURRENT_DATE
+    AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+  LEFT JOIN dim_brand b ON b.brand_id = ubt.brand_id
+  WHERE u.login_id IN (42, 51, 52, 53, 54)
+  ORDER BY u.login_id
+")
+
+
+demo_login_id <- 54
+demo_brand <- 'Burton'
+
+generate_and_email_demo_report(
+  login_id   = 54,
+  brand_name = "Burton",
+  to_email   = c("alex@airrscore.com", "steven@airrscore.com")
+)
+
+generate_and_email_demo_report(
+  login_id   = 67,   # onboarding account login_id
+  brand_name = "Veoci",
+  to_email   = "alex@airrscore.com"
+)

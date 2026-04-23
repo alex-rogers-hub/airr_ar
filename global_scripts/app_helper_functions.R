@@ -1592,3 +1592,383 @@ get_brand_aliases <- function(brand_id) {
     error = function(e) data.frame()
   )
 }
+
+
+#' Get all linked accounts for a primary user
+get_linked_accounts <- function(login_id) {
+  dbGetQuery(pool, "
+    SELECT 
+      u.login_id,
+      u.email,
+      u.onboarding_complete,
+      COALESCE(u.account_name, b.brand_name, u.email) AS display_name,
+      b.brand_name,
+      ds.subscription_name
+    FROM dim_user u
+    LEFT JOIN fact_user_brands_tracked ubt
+      ON ubt.login_id = u.login_id
+      AND ubt.main_brand_flag = TRUE
+      AND ubt.date_valid_from <= CURRENT_DATE
+      AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+    LEFT JOIN dim_brand b ON b.brand_id = ubt.brand_id
+    LEFT JOIN fact_user_sub_level fus
+      ON fus.login_id = u.login_id
+      AND fus.date_valid_from <= CURRENT_DATE
+      AND fus.date_valid_to >= CURRENT_DATE
+    LEFT JOIN dim_subscription ds
+      ON ds.subscription_level_id = fus.subscription_level_id
+    WHERE u.primary_login_id = $1
+      AND u.is_linked_account = TRUE
+    ORDER BY u.login_id",
+             params = list(login_id))
+}
+
+#' Get the primary account for a linked user
+get_primary_account <- function(login_id) {
+  dbGetQuery(pool, "
+    SELECT u2.login_id, u2.email, b.brand_name
+    FROM dim_user u1
+    JOIN dim_user u2 ON u2.login_id = u1.primary_login_id
+    LEFT JOIN fact_user_brands_tracked ubt
+      ON ubt.login_id = u2.login_id
+      AND ubt.main_brand_flag = TRUE
+      AND ubt.date_valid_from <= CURRENT_DATE
+      AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+    LEFT JOIN dim_brand b ON b.brand_id = ubt.brand_id
+    WHERE u1.login_id = $1",
+             params = list(login_id))
+}
+
+
+#' @param primary_email     Email of the main account to link to
+#' @param link_number       Which link number (1, 2, 3...) — determines email prefix
+#' @param password          Password for the new linked account
+#' @param n_competitors     Competitor slots for this account
+#' @param n_prompts         Prompt slots for this account
+#' @param n_personas        Persona slots for this account
+#' @param brand_name        Optional — pre-set the brand name
+#'
+create_linked_account <- function(primary_email,
+                                  link_number   = 1,
+                                  password      = NULL,
+                                  n_competitors = 10,
+                                  n_prompts     = 10,
+                                  n_personas    = 3,
+                                  account_name   = NULL, 
+                                  brand_name    = NULL) {
+  
+  # ── Find primary account ─────────────────────────────────────────────
+  primary <- dbGetQuery(pool,
+                        "SELECT login_id, email FROM dim_user WHERE email = $1",
+                        params = list(tolower(trimws(primary_email))))
+  
+  if (nrow(primary) == 0) {
+    cat(sprintf("✗ Primary account not found: %s\n", primary_email))
+    return(invisible(NULL))
+  }
+  
+  primary_login_id <- primary$login_id[1]
+  cat(sprintf("✓ Primary account found: %s (login_id: %d)\n",
+              primary_email, primary_login_id))
+  
+  # ── Build linked email address ────────────────────────────────────────
+  # Split primary email at @ and prepend link prefix
+  # Clean the primary email before splitting
+  primary_email_clean <- tolower(trimws(primary_email))
+  email_parts  <- strsplit(primary_email, "@")[[1]]
+  # Remove any whitespace from both parts before concatenating
+  local_part  <- trimws(email_parts[1])
+  domain_part <- trimws(email_parts[2])
+  
+  linked_email <- sprintf("link%d.%s@%s", link_number, local_part, domain_part)
+  
+  # Final safety clean — remove any remaining whitespace
+  linked_email <- gsub("\\s+", "", linked_email)
+  
+  cat(sprintf("  Linked email: %s\n", linked_email))
+  
+  # Check it doesn't already exist
+  existing <- dbGetQuery(pool,
+                         "SELECT login_id FROM dim_user WHERE email = $1",
+                         params = list(linked_email))
+  
+  if (nrow(existing) > 0) {
+    cat(sprintf("! Linked account already exists (login_id: %d)\n",
+                existing$login_id[1]))
+    linked_login_id <- existing$login_id[1]
+  } else {
+    # ── Create the linked user account ─────────────────────────────────
+    if (is.null(password)) {
+      # Generate a random password if none supplied
+      password <- paste0(
+        sample(c(LETTERS, letters, 0:9, "!", "@", "#"), 12, replace = TRUE),
+        collapse = "")
+    }
+    
+    password_hash <- digest::digest(password, algo = "sha256")
+    
+    new_user <- dbGetQuery(pool,
+                           "INSERT INTO dim_user
+       (date_added, email, password_hash, onboarding_complete,
+        is_linked_account, primary_login_id, account_name)
+     VALUES (CURRENT_DATE, $1, $2, FALSE, TRUE, $3, $4)
+     RETURNING login_id",
+                           params = list(linked_email, password_hash, primary_login_id,
+                                         account_name %||% linked_email))
+    
+    linked_login_id <- new_user$login_id[1]
+    cat(sprintf("✓ Linked user created (login_id: %d)\n", linked_login_id))
+  }
+  
+  # ── Determine subscription — Enterprise base + extra slots if needed ──
+  ent_sub <- dbGetQuery(pool,
+                        "SELECT subscription_level_id, num_competitors_included,
+            num_prompts_included, num_personas_included
+     FROM dim_subscription
+     WHERE subscription_name = 'Enterprise' LIMIT 1")
+  
+  if (nrow(ent_sub) == 0) {
+    cat("✗ Enterprise subscription tier not found\n")
+    return(invisible(NULL))
+  }
+  
+  sub_level_id      <- ent_sub$subscription_level_id[1]
+  base_competitors  <- ent_sub$num_competitors_included[1]
+  base_prompts      <- ent_sub$num_prompts_included[1]
+  base_personas     <- ent_sub$num_personas_included[1]
+  
+  extra_competitors <- max(0, n_competitors - base_competitors)
+  extra_prompts     <- max(0, n_prompts     - base_prompts)
+  extra_personas    <- max(0, n_personas    - base_personas)
+  
+  # Close any existing subscriptions
+  dbExecute(pool,
+            "UPDATE fact_user_sub_level
+     SET date_valid_to = CURRENT_DATE - 1
+     WHERE login_id = $1 AND date_valid_to >= CURRENT_DATE",
+            params = list(linked_login_id))
+  
+  # Insert subscription with extras
+  dbExecute(pool,
+            "INSERT INTO fact_user_sub_level
+       (login_id, subscription_level_id, date_valid_from, date_valid_to,
+        extra_competitors_added, extra_prompts_added, extra_personas_added)
+     VALUES ($1, $2, CURRENT_DATE, '2099-12-31', $3, $4, $5)
+     ON CONFLICT DO NOTHING",
+            params = list(linked_login_id, sub_level_id,
+                          extra_competitors, extra_prompts, extra_personas))
+  
+  cat(sprintf("✓ Subscription set: Enterprise + %d extra competitors, ",
+              extra_competitors))
+  cat(sprintf("%d extra prompts, %d extra personas\n",
+              extra_prompts, extra_personas))
+  
+  # ── Summary ───────────────────────────────────────────────────────────
+  cat("\n=== Linked account created ===\n")
+  cat(sprintf("  Primary account:  %s (login_id: %d)\n",
+              primary_email, primary_login_id))
+  cat(sprintf("  Linked email:     %s\n", linked_email))
+  cat(sprintf("  Linked login_id:  %d\n", linked_login_id))
+  cat(sprintf("  Password:         %s\n", password))
+  cat(sprintf("  Competitors:      %d (%d base + %d extra)\n",
+              n_competitors, base_competitors, extra_competitors))
+  cat(sprintf("  Prompts:          %d (%d base + %d extra)\n",
+              n_prompts, base_prompts, extra_prompts))
+  cat(sprintf("  Personas:         %d (%d base + %d extra)\n",
+              n_personas, base_personas, extra_personas))
+  cat("\nUser completes brand setup on first login.\n")
+  
+  return(invisible(list(
+    primary_login_id = primary_login_id,
+    primary_email    = primary_email,
+    linked_login_id  = linked_login_id,
+    linked_email     = linked_email,
+    password         = password,
+    n_competitors    = n_competitors,
+    n_prompts        = n_prompts,
+    n_personas       = n_personas
+  )))
+}
+
+#' Generate onboarding demo report and email it
+#'
+#' @param login_id    Login ID of the demo account
+#' @param brand_name  Brand name for the report title
+#' @param to_email    Email address to send report to
+generate_and_email_demo_report <- function(login_id,
+                                           brand_name,
+                                           to_email = c("alex@airrscore.com", "steven@airrscore.com")) {
+  
+  message("=== Generating demo report ===")
+  message(sprintf("  login_id:   %d", login_id))
+  message(sprintf("  brand_name: %s", brand_name))
+  message(sprintf("  to_email:   %s", paste(to_email, collapse = ", ")))
+  
+  # ── Locate the Rmd template ────────────────────────────────────────
+  # Try both web server and dev paths
+  possible_rmd <- c(
+    "/srv/shiny-server/AiRR/reports/onboarding_demo_report.Rmd",
+    "/home/aarogers/airr/reports/onboarding_demo_report.Rmd",
+    "/home/aarogers/AiRR/reports/onboarding_demo_report.Rmd"
+  )
+  
+  rmd_path <- Find(file.exists, possible_rmd)
+  
+  if (is.null(rmd_path)) {
+    message("✗ Report template not found")
+    return(invisible(FALSE))
+  }
+  
+  # ── Render to HTML ─────────────────────────────────────────────────
+  output_dir  <- tempdir()
+  output_file <- file.path(
+    output_dir,
+    sprintf("airr_demo_%s_%s.html",
+            gsub("[^a-zA-Z0-9]", "_", brand_name),
+            format(Sys.Date(), "%Y%m%d"))
+  )
+  
+  message("  Rendering report...")
+  
+  render_result <- tryCatch({
+    rmarkdown::render(
+      input         = rmd_path,
+      output_file   = output_file,
+      output_format = "html_document",
+      params        = list(
+        login_id   = login_id,
+        brand_name = brand_name,
+        email      = to_email
+      ),
+      envir  = new.env(parent = globalenv()),
+      quiet  = TRUE
+    )
+    TRUE
+  }, error = function(e) {
+    message(sprintf("✗ Render failed: %s", e$message))
+    FALSE
+  })
+  
+  if (!render_result || !file.exists(output_file)) {
+    message("✗ Report file not created")
+    return(invisible(FALSE))
+  }
+  
+  file_size <- file.info(output_file)$size
+  message(sprintf("  ✓ Report rendered: %.1f KB", file_size / 1024))
+  
+  # ── Send email ─────────────────────────────────────────────────────
+  message("  Sending email...")
+  
+  subject <- sprintf("AiRR Demo Report — %s — %s",
+                     brand_name,
+                     format(Sys.Date(), "%B %d, %Y"))
+  
+  body <- paste0(
+    "Hi,\n\n",
+    "Here is the AiRR demo session report for ", brand_name, ".\n\n",
+    "The report includes:\n",
+    "  - AiRR Score and 4P breakdown\n",
+    "  - Brand leaderboard vs competitors\n",
+    "  - Score trends over time\n",
+    "  - Prompt-level scores\n",
+    "  - Customer persona scores\n\n",
+    "The demo account has been reset and is ready for the next session.\n\n",
+    "The AiRR Team\n",
+    "airrscore.com"
+  )
+  
+  smtp_host     <- Sys.getenv("SMTP_HOST")
+  smtp_port     <- as.integer(Sys.getenv("SMTP_PORT") %||% "587")
+  smtp_user     <- Sys.getenv("SMTP_USER")
+  smtp_password <- Sys.getenv("SMTP_PASSWORD")
+  from_email    <- Sys.getenv("SMTP_FROM") %||% "noreply@airrscore.com"
+  
+  email_result <- tryCatch({
+    
+    if (!nzchar(smtp_host)) {
+      message(sprintf("  SMTP not configured — report saved to: %s",
+                      output_file))
+      return(invisible(TRUE))
+    }
+    
+    # Build raw email with attachment using curl
+    boundary   <- paste0("boundary_", format(Sys.time(), "%Y%m%d%H%M%S"))
+    html_b64   <- base64enc::base64encode(output_file)
+    attach_name <- basename(output_file)
+    to_header <- paste(to_email, collapse = ", ")
+    
+    raw_email <- paste0(
+      "From: AiRR <", from_email, ">\r\n",
+      "To: ", to_header, "\r\n",
+      "Subject: ", subject, "\r\n",
+      "MIME-Version: 1.0\r\n",
+      "Content-Type: multipart/mixed; boundary=\"", boundary, "\"\r\n",
+      "\r\n",
+      "--", boundary, "\r\n",
+      "Content-Type: text/plain; charset=utf-8\r\n",
+      "\r\n",
+      body, "\r\n",
+      "\r\n",
+      "--", boundary, "\r\n",
+      "Content-Type: text/html; name=\"", attach_name, "\"\r\n",
+      "Content-Disposition: attachment; filename=\"", attach_name, "\"\r\n",
+      "Content-Transfer-Encoding: base64\r\n",
+      "\r\n",
+      html_b64, "\r\n",
+      "--", boundary, "--\r\n"
+    )
+    
+    tmp_email <- tempfile()
+    writeLines(raw_email, tmp_email)
+    on.exit(unlink(tmp_email), add = TRUE)
+    
+    # Build curl args based on port
+    # Port 465 = implicit SSL (smtps://)
+    # Port 587 = STARTTLS (smtp:// + --ssl)
+    smtp_url  <- if (smtp_port == 465) {
+      paste0("smtps://", smtp_host, ":", smtp_port)
+    } else {
+      paste0("smtp://", smtp_host, ":", smtp_port)
+    }
+    
+    ssl_args <- if (smtp_port == 465) {
+      c("--ssl-reqd")   # implicit SSL for port 465
+    } else {
+      c("--ssl")        # STARTTLS for port 587
+    }
+    
+    rcpt_args <- as.vector(rbind("--mail-rcpt", to_email))
+    
+    result <- system2(
+      "curl",
+      args = c(
+        "--url",       smtp_url,
+        ssl_args,
+        "--user",      paste0(smtp_user, ":", smtp_password),
+        "--mail-from", from_email,
+        rcpt_args,
+        "--upload-file", tmp_email,
+        "--verbose"    # remove this once working
+      ),
+      stdout = TRUE,
+      stderr = TRUE
+    )
+    
+    message("curl exit: ", attr(result, "status") %||% "0")
+    message(paste(result, collapse = "\n"))
+    
+    message(sprintf("  ✓ Email sent to %s", paste(to_email, collapse = ", ")))
+    TRUE
+    
+  }, error = function(e) {
+    message(sprintf("  ✗ Email failed: %s", e$message))
+    message(sprintf("  Report saved at: %s", output_file))
+    FALSE
+  })
+  
+  # Clean up temp file
+  unlink(output_file)
+  
+  return(invisible(email_result))
+}

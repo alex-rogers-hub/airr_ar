@@ -388,3 +388,59 @@ message(sprintf("✓ Exported %d rows to query_history_export_%s.csv",
                 nrow(query_history_export), Sys.Date()))
 
 null_hist <- dbGetQuery(pool,'SELECT COUNT(*) FROM fact_airr_history WHERE login_id IS NULL;')
+
+# Add linked account columns to dim_user
+dbExecute(pool, "
+  ALTER TABLE dim_user
+  ADD COLUMN IF NOT EXISTS is_linked_account BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS primary_login_id   INTEGER REFERENCES dim_user(login_id)
+")
+
+# Index for fast lookup
+dbExecute(pool, "
+  CREATE INDEX IF NOT EXISTS idx_user_primary_login
+  ON dim_user(primary_login_id)
+  WHERE primary_login_id IS NOT NULL
+")
+
+dbExecute(pool, "
+  ALTER TABLE dim_user
+  ADD COLUMN IF NOT EXISTS account_name TEXT
+")
+
+
+# Set account_name = main brand name for all existing users
+dbExecute(pool, "
+  UPDATE dim_user u
+  SET account_name = b.brand_name
+  FROM fact_user_brands_tracked ubt
+  JOIN dim_brand b ON b.brand_id = ubt.brand_id
+  WHERE ubt.login_id = u.login_id
+    AND ubt.main_brand_flag = TRUE
+    AND ubt.date_valid_from <= CURRENT_DATE
+    AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+    AND u.account_name IS NULL
+")
+
+# Verify
+dbGetQuery(pool, "
+  SELECT login_id, email, account_name 
+  FROM dim_user 
+  ORDER BY login_id DESC 
+  LIMIT 10
+")
+
+
+dbExecute(pool, "
+  UPDATE dim_user 
+  SET account_name = 'Top 20 US UHNW Wealth Management Firms'
+  WHERE login_id = 71  -- update to actual linked email
+")
+
+# Verify
+dbGetQuery(pool, "
+  SELECT login_id, email, account_name, is_linked_account
+  FROM dim_user
+  WHERE is_linked_account = TRUE
+    OR primary_login_id IS NOT NULL
+")

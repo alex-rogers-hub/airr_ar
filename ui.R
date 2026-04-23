@@ -57,6 +57,8 @@ ui <- dashboardPage(
     # Persistent brand card
     uiOutput("sidebar_brand_card"),
     
+    uiOutput("linked_account_switcher_ui"),
+    
     # Sticky scores — slides in when score cards scroll out of view
     div(
       id = "sidebar_sticky_scores",

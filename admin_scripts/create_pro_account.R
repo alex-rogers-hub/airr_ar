@@ -104,4 +104,4 @@ create_pro_account <- function(email, password) {
 }
 
 # create_pro_account('rentrup@airrscore.com', 'REntrup123!')
-create_pro_account('pro@airrscore.com', 'Pro_airr_123!')
+# create_pro_account('pro@airrscore.com', 'Pro_airr_123!')

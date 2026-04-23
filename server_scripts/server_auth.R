@@ -245,9 +245,30 @@ observeEvent(input$register_btn, {
 
 observeEvent(input$logout, {
   
+  # Reset onboarding demo account on logout
   if (!is.null(rv$email) && is_onboarding_account(rv$email)) {
-    message("Onboarding account logging out — resetting...")
-    reset_onboarding_account(rv$login_id)
+    
+    message("Onboarding account logging out — generating report then resetting...")
+    
+    # Capture values before clearing rv
+    demo_login_id  <- rv$login_id
+    demo_brand     <- rv$brand_name %||% "Demo Brand"
+    demo_email_log <- rv$email
+    
+    # Generate report and email — do this BEFORE reset so data still exists
+    tryCatch({
+      generate_and_email_demo_report(
+        login_id   = demo_login_id,
+        brand_name = demo_brand,
+        to_email   = "alex@airrscore.com"
+      )
+    }, error = function(e) {
+      message(sprintf("Report generation failed: %s", e$message))
+    })
+    
+    # Now reset the account
+    message("Resetting onboarding account...")
+    reset_onboarding_account(demo_login_id)
   }
   
   rv$logged_in           <- FALSE
@@ -264,7 +285,8 @@ observeEvent(input$logout, {
   rv$demo_login_id       <- NULL
   rv$demo_targets        <- NULL
   
-  showNotification("Logged out successfully", type = "message", duration = 3)
+  showNotification("Logged out successfully",
+                   type = "message", duration = 3)
 })
 
 # ============================================
@@ -413,27 +435,25 @@ admin_user_list <- reactive({
       b.brand_name,
       ds.subscription_name
     FROM dim_user u
-    -- Must have at least one active brand being tracked
     INNER JOIN fact_user_brands_tracked ubt
       ON ubt.login_id = u.login_id
       AND ubt.main_brand_flag = TRUE
       AND ubt.date_valid_from <= CURRENT_DATE
       AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to > CURRENT_DATE)
-    LEFT JOIN dim_brand b 
-      ON b.brand_id = ubt.brand_id
-    LEFT JOIN fact_user_sub_level fus 
+    LEFT JOIN dim_brand b ON b.brand_id = ubt.brand_id
+    LEFT JOIN fact_user_sub_level fus
       ON fus.login_id = u.login_id
       AND fus.date_valid_from <= CURRENT_DATE
       AND (fus.date_valid_to IS NULL OR fus.date_valid_to > CURRENT_DATE)
-    LEFT JOIN dim_subscription ds 
+    LEFT JOIN dim_subscription ds
       ON ds.subscription_level_id = fus.subscription_level_id
-    -- Exclude demo accounts and admin accounts
     WHERE u.is_demo = FALSE
+      AND (u.is_linked_account = FALSE OR u.is_linked_account IS NULL)
       AND u.email NOT IN (SELECT unnest($1::text[]))
       AND u.onboarding_complete = TRUE
     ORDER BY u.login_id DESC
-  ", params = list(paste0('{', 
-                          paste(c(ADMIN_EMAILS, ONBOARDING_DEMO_EMAIL), collapse = ','), 
+  ", params = list(paste0('{',
+                          paste(c(ADMIN_EMAILS, ONBOARDING_DEMO_EMAIL), collapse = ','),
                           '}')))
 })
 
@@ -912,3 +932,146 @@ observeEvent(input$register_btn, {
   }
 }, ignoreInit = TRUE, priority = 10)
 
+# ── Linked accounts switcher ─────────────────────────────────────────────
+
+linked_accounts_list <- reactive({
+  req(rv$logged_in, rv$login_id)
+  if (isTRUE(rv$is_demo)) return(NULL)
+  
+  tryCatch({
+    user_info <- dbGetQuery(pool,
+                            "SELECT is_linked_account, primary_login_id
+       FROM dim_user WHERE login_id = $1",
+                            params = list(rv$login_id))
+    
+    if (nrow(user_info) == 0) return(NULL)
+    
+    root_id <- if (isTRUE(user_info$is_linked_account[1]) &&
+                   !is.na(user_info$primary_login_id[1])) {
+      user_info$primary_login_id[1]
+    } else {
+      rv$login_id
+    }
+    
+    linked <- get_linked_accounts(root_id)
+    if (nrow(linked) == 0) return(NULL)
+    
+    # Get primary account with display_name
+    primary <- dbGetQuery(pool,
+                          "SELECT 
+         u.login_id,
+         u.email,
+         u.onboarding_complete,
+         COALESCE(u.account_name, b.brand_name, u.email) AS display_name,
+         b.brand_name
+       FROM dim_user u
+       LEFT JOIN fact_user_brands_tracked ubt
+         ON ubt.login_id = u.login_id
+         AND ubt.main_brand_flag = TRUE
+         AND ubt.date_valid_from <= CURRENT_DATE
+         AND (ubt.date_valid_to IS NULL OR ubt.date_valid_to >= CURRENT_DATE)
+       LEFT JOIN dim_brand b ON b.brand_id = ubt.brand_id
+       WHERE u.login_id = $1",
+                          params = list(root_id))
+    
+    all_accounts <- bind_rows(
+      primary %>% mutate(is_current_primary = TRUE),
+      linked  %>% mutate(is_current_primary = FALSE)
+    )
+    
+    list(accounts = all_accounts, root_id = root_id)
+    
+  }, error = function(e) NULL)
+})
+
+output$linked_account_switcher_ui <- renderUI({
+  req(rv$logged_in, rv$login_id)
+  
+  data <- tryCatch(linked_accounts_list(), error = function(e) NULL)
+  if (is.null(data) || nrow(data$accounts) <= 1) return(NULL)
+  
+  accounts <- data$accounts
+  
+  # Use display_name for the dropdown labels
+  choices <- setNames(
+    accounts$login_id,
+    accounts$display_name
+  )
+  
+  div(
+    style = "padding: 12px; margin: 8px 12px;
+             background: rgba(212,168,67,0.06);
+             border: 1px solid rgba(212,168,67,0.2);
+             border-radius: 10px;",
+    
+    div(
+      style = "font-size: 10px; font-weight: 700; text-transform: uppercase;
+               letter-spacing: 0.8px; color: #D4A843; margin-bottom: 8px;
+               display: flex; align-items: center; gap: 6px;",
+      icon("link", style = "font-size: 10px;"),
+      "Linked Accounts"
+    ),
+    
+    selectInput(
+      "linked_account_select",
+      NULL,
+      choices  = choices,
+      selected = rv$login_id,
+      width    = "100%"
+    ),
+    
+    actionButton(
+      "linked_account_switch_btn",
+      "Switch Account",
+      icon  = icon("arrows-rotate"),
+      style = "width: 100%; background: rgba(212,168,67,0.15);
+               color: #D4A843; border: 1px solid rgba(212,168,67,0.3);
+               border-radius: 6px; font-size: 12px; font-weight: 600;
+               padding: 5px; margin-top: 6px;"
+    )
+  )
+})
+
+observeEvent(input$linked_account_switch_btn, {
+  req(rv$logged_in, rv$login_id)
+  if (isTRUE(rv$is_demo)) return()
+  
+  selected_id <- as.integer(input$linked_account_select)
+  if (is.na(selected_id) || selected_id == rv$login_id) return()
+  
+  # Verify this user is actually linked to the current user
+  data <- tryCatch(linked_accounts_list(), error = function(e) NULL)
+  if (is.null(data)) return()
+  
+  valid_ids <- data$accounts$login_id
+  if (!selected_id %in% valid_ids) {
+    showNotification("Invalid account selection.",
+                     type = "error", duration = 3)
+    return()
+  }
+  
+  target <- dbGetQuery(pool,
+                       "SELECT login_id, email FROM dim_user WHERE login_id = $1",
+                       params = list(selected_id))
+  
+  if (nrow(target) == 0) return()
+  
+  # Store whether we're an admin so .load_user_state doesn't wipe it
+  stored_is_admin       <- isolate(rv$is_admin)
+  stored_admin_email    <- isolate(rv$admin_email)
+  stored_admin_login_id <- isolate(rv$admin_login_id)
+  
+  .load_user_state(target$login_id[1], target$email[1])
+  
+  # Restore admin state if applicable
+  rv$is_admin       <- stored_is_admin
+  rv$admin_email    <- stored_admin_email
+  rv$admin_login_id <- stored_admin_login_id
+  rv$is_demo        <- FALSE
+  
+  brand_label <- if (!is.null(rv$brand_name)) rv$brand_name else target$email[1]
+  showNotification(
+    paste0("\u2713 Switched to: ", brand_label),
+    type = "message", duration = 3
+  )
+})

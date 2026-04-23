@@ -26,6 +26,7 @@ library(knitr)
 library(base64enc)
 library(later)
 library(future.apply)
+library(curl)
 
 # plan(multisession)
 # plan(multisession, workers = 2)

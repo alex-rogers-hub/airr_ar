@@ -11,7 +11,7 @@ results <- mclapply(
     list(name = "refresh", fn = function() {
       message("=== daily_refresh_loop START: ", format(Sys.time()), " ===")
       tryCatch(
-        daily_refresh_loop(model = "gpt-4.1-mini"),
+        daily_refresh_loop_batch(model = "gpt-4.1-mini"),
         error = function(e) message("daily_refresh_loop ERROR: ", e$message)
       )
       message("=== daily_refresh_loop END: ", format(Sys.time()), " ===")
@@ -21,7 +21,7 @@ results <- mclapply(
       Sys.sleep(15)
       message("=== daily_prompt_loop START: ", format(Sys.time()), " ===")
       tryCatch(
-        daily_prompt_loop(model = "gpt-4.1-mini"),
+        daily_prompt_loop(model = "gpt-4.1-mini", use_batch = FALSE),
         error = function(e) message("daily_prompt_loop ERROR: ", e$message)
       )
       message("=== daily_prompt_loop END: ", format(Sys.time()), " ===")
